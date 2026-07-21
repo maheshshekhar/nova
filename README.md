@@ -28,12 +28,12 @@ chart / Kubernetes), or via the included **one‑command KinD demo** under
 - [Deploy to production](#deploy-to-production)
   - [Docker](#option-1--docker)
   - [Helm / Kubernetes](#option-2--helm--kubernetes)
+- [Architecture](#architecture)
 - [The included demo (KinD)](#the-included-demo-kind)
 - [Adapters & extensibility](#adapters--extensibility)
 - [Testing](#testing)
 - [Environment variables](#environment-variables)
 - [Repository layout](#repository-layout)
-- [Architecture](#architecture)
 - [Troubleshooting](#troubleshooting)
 - [Security](#security-notes)
 
@@ -188,14 +188,98 @@ for every option.
 
 ---
 
+## Architecture
+
+Nova is a **ports‑and‑adapters** application: a **domain‑agnostic core**, driven entirely by
+config, that talks to the outside world only through **interfaces resolved at runtime** from
+an `AdapterRegistry`. Swapping a logging backend, a persistence store or a whole domain is a
+config change — never a code change.
+
+```mermaid
+flowchart TB
+    subgraph CFG["⚙️ Config — file-authoritative"]
+        C1["nova.config.yaml<br/>+ env secrets"]
+        C2["domains/*.yaml<br/>Domain Packs"]
+        C3["prompts/*.md<br/>templates"]
+    end
+
+    UI["🖥️ Dashboard — Next.js / React<br/>/overview · /incidents · /logs · /eval · /settings + chat"]
+
+    subgraph API["Next.js API routes — server"]
+        A1["/api/analyze · /api/chat"]
+        A2["/api/eval"]
+        A3["/api/logs"]
+        A4["/api/incidents"]
+        A5["/api/remediate"]
+    end
+
+    subgraph CORE["🧠 Nova core — carries no domain/demo knowledge"]
+        CE["Context engine<br/>providers + token budget"]
+        PT["Prompt renderer<br/>variable substitution"]
+        DP["Domain pack<br/>impact · severity · glossary"]
+        RX["Egress redaction"]
+        EV["LLM-as-judge eval"]
+        RB["Runbook store + ActionExecutor<br/>approval · RBAC · audit"]
+    end
+
+    subgraph PORTS["🔌 Ports → Adapters — AdapterRegistry"]
+        LS["LogSource<br/>Loki · Elasticsearch · OpenSearch"]
+        PS["PersistenceStore<br/>File (Mongo/PG/S3 ready)"]
+        AI["AI provider<br/>OpenRouter · Anthropic"]
+    end
+
+    subgraph EXT["External systems"]
+        LOG[("Log backend")]
+        LLM["AI provider API"]
+        VOL[("/data volume")]
+        K8S["Kubernetes cluster<br/>(optional · examples/kind-demo)"]
+    end
+
+    C1 --> CORE
+    C2 --> DP
+    C3 --> PT
+
+    UI --> API
+    A1 --> CE --> PT --> AI
+    A1 --> DP
+    A2 --> EV --> AI
+    A3 --> LS
+    A4 --> PS
+    A5 --> RB
+
+    LS --> RX --> CE
+    LS --> LOG
+    PS --> VOL
+    AI --> LLM
+    A5 -. k8s action .-> K8S
+    LS -. demo logs .-> K8S
+```
+
+> Renders natively on GitHub. In VS Code, install the **Markdown Preview Mermaid Support**
+> extension to see it in the built‑in preview.
+
+- **Config is file‑authoritative.** `nova.config.yaml` (+ `${ENV}` secrets), Domain Packs and
+  prompt templates drive every behaviour; a partial config inherits every default. The
+  read‑only `/settings` page shows the resolved config (secrets never displayed).
+- **The core is domain‑agnostic.** Impact signal, severity rules, glossary and prompt wording
+  all come from the active Domain Pack — `test/architecture/no-demo-imports.test.ts` and the
+  domain leak test prove no demo or domain vocabulary is hardcoded in the core.
+- **Everything external is a port + adapter.** `LogSource`, `PersistenceStore` and the AI
+  provider are interfaces resolved from the registry at runtime; each adapter must pass a
+  shared **contract test** before it ships.
+- **Grounded and safe.** The context engine assembles a budgeted, **redacted** context for the
+  model; runbook remediations run only behind **approval + RBAC + audit**; API keys stay in
+  environment variables and never reach the browser.
+
+---
+
 ## The included demo (KinD)
 
-The full local demo (a real `payment-service`, Postgres, Loki, Grafana, load generator, and
+The full local demo (a real `payment-service`, Postgres, Loki, Grafana, a load generator, and
 the incident cascade) lives entirely under [`examples/kind-demo/`](examples/kind-demo) and is
-driven by the scripts in [`examples/kind-demo/scripts/`](examples/kind-demo/scripts). It is **not** part of the core product.
-
-
-## Architecture
+driven by the scripts in [`examples/kind-demo/scripts/`](examples/kind-demo/scripts). It is a
+**backing environment** for Nova — not part of the core product (the boundary test enforces
+that the app never imports it).
 
 ```mermaid
 flowchart TB
@@ -203,18 +287,19 @@ flowchart TB
 
     subgraph api["Next.js API routes"]
         direction LR
-        ANALYZE["/api/analyze<br/>streams Claude RCA"]
+        ANALYZE["/api/analyze<br/>streams RCA"]
         METRICS["/api/metrics<br/>proxy → collector"]
         INJECT["/api/inject<br/>create k6 load Job"]
     end
 
-    CLAUDE["☁️ Claude API<br/>OpenRouter / Anthropic"]
+    CLAUDE["☁️ AI provider<br/>OpenRouter / Anthropic"]
 
     subgraph cluster["KinD cluster · ns: production + nova-monitoring"]
-        PS["payment-service<br/>(3 pods)"]
+        PSVC["payment-service<br/>(3 pods)"]
         PG[("postgres<br/>max_connections = 5")]
         MC["metrics-collector"]
         LG["load-generator<br/>(k6 Job)"]
+        LOKI["loki + fluent-bit"]
         DASH["dashboard<br/>(containerised)"]
     end
 
@@ -223,33 +308,23 @@ flowchart TB
     UI -->|inject| INJECT
 
     ANALYZE --> CLAUDE
+    ANALYZE -->|LogQL| LOKI
     METRICS -->|reads JSON| MC
     INJECT -->|K8s API| LG
 
-    LG -->|hammers /api/checkout| PS
-    PS -->|connection pool| PG
-    MC -->|pod metrics| PS
+    LG -->|hammers /api/checkout| PSVC
+    PSVC -->|connection pool| PG
+    PSVC -->|logs| LOKI
+    MC -->|pod metrics| PSVC
 ```
 
-> Renders natively on GitHub. In VS Code, install the **Markdown Preview Mermaid Support**
-> extension to see it in the built‑in preview.
-
-- **`payment-service`** opens a deliberately tiny DB pool (`max: 2`) against a Postgres
-  capped at `max_connections=5`. Under load it exhausts connections, returns 503s, and its
-  `/health` probe starts failing → Kubernetes restarts pods (visible `CrashLoopBackOff`).
-- **`metrics-collector`** polls the K8s API every 3s and aggregates pods into per‑service
-  metrics/health/status (CPU, ready/crashed pods, deployments). Pod **logs** are no longer
-  collected here.
-- **`fluent-bit`** (DaemonSet) tails every node's container logs, keeps the `production`
-  namespace, and ships them to **`loki`** labelled `{namespace, app}`. The dashboard queries
-  Loki via LogQL for incident RCA and the `/api/logs` viewer; **`grafana`** (at
-  `https://grafana`, via Caddy) sits on the same store for manual deep-dives.
-- **`alertmanager`** + the Loki **ruler** provide the autonomous log-driven detection path:
-  an ERROR spike fires an alert that webhooks `/api/alerts` to open an incident.
-- **`dashboard`** reads metrics through `/api/metrics` and logs through `/api/logs`, and shows a
-  `LIVE` badge when the backends are reachable, `SIMULATED`/`OFFLINE` otherwise.
+In the demo, the `LogSource` adapter is **Loki**: `fluent-bit` ships `payment-service` pod
+logs into Loki, and Nova pulls the incident window back via LogQL for RCA and the `/api/logs`
+viewer. `metrics-collector` aggregates pod health for the service table, and a k6
+`load-generator` drives the connection‑pool cascade that opens `INC-2847`.
 
 ---
+
 
 ## Repository layout
 
