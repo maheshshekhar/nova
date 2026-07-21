@@ -1,0 +1,12 @@
+{
+  "name": "config-service",
+  "version": "1.0.0",
+  "description": "Config service for Nova — serves feature flags / app config",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

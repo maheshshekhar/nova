@@ -1,0 +1,9 @@
+# Code owners — every change requires review + approval from the owner before it
+# can be merged (enforced together with branch protection; see README / repo
+# Settings → Branches). GitHub auto-requests a review from the owners listed here
+# on every pull request, and "Require review from Code Owners" blocks the merge
+# until they approve.
+#
+# Replace @your-github-username with your GitHub handle (or an @org/team).
+
+*                       @your-github-username

@@ -1,0 +1,93 @@
+# Default values for the Nova Helm chart.
+# See the README "Deploy to Kubernetes (Helm)" section for the full guide.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/your-org/nova
+  tag: "" # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# ── Nova configuration (rendered to a ConfigMap → mounted at /app/nova.config.yaml) ──
+# This is the entire nova.config.yaml. Secrets stay OUT of here — reference them
+# with ${ENV_VAR} and provide the value via `secret` below. See nova.config.example.yaml.
+novaConfig:
+  logs:
+    provider: loki # loki | elasticsearch | opensearch
+    url: ${LOKI_URL:-http://loki:3100}
+    scope:
+      include:
+        - { namespace: production }
+      exclude:
+        - { service: load-generator }
+  persistence:
+    provider: file
+    seed: none # 'none' for a real deployment; 'demo' seeds the bundled sample history
+    dataDir: /data
+  ai:
+    provider: openrouter
+    apiKeyEnv: OPENROUTER_API_KEY
+  # domain: /app/domains/generic-k8s.yaml   # optional Domain Pack
+  features:
+    chat: true
+    eval: true
+    autoRemediation: false
+
+# ── Secrets (AI keys, backend credentials) — kept in a Kubernetes Secret ──
+# Option A (recommended): reference an existing Secret you manage out-of-band.
+#   secret.existingSecret: my-nova-secrets
+# Option B: let the chart create the Secret from the values below (avoid committing real keys).
+secret:
+  existingSecret: ""
+  create: true
+  data:
+    OPENROUTER_API_KEY: ""
+    # ANTHROPIC_API_KEY: ""
+    # LOKI_URL: "http://loki.observability:3100"
+
+# Extra plain (non-secret) environment variables.
+extraEnv: []
+#  - name: NODE_ENV
+#    value: production
+
+# ── Persistence (the file store lives here; use a real backend to avoid a PVC) ──
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+  accessMode: ReadWriteOnce
+
+service:
+  type: ClusterIP
+  port: 3000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: nova.example.com
+  tls: false
+  tlsSecretName: nova-tls
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+# Nova runs as a non-root user (uid 1001) that must write to /data.
+podSecurityContext:
+  fsGroup: 1001
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

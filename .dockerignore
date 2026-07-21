@@ -1,0 +1,8 @@
+node_modules
+.next
+.git
+**/node_modules
+**/.next
+examples
+.env.local
+examples/kind-demo/k8s/secret.yaml

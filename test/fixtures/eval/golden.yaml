@@ -1,0 +1,12 @@
+# Fixture golden-cases dataset for the cases-loader test.
+- id: fixture-case
+  title: "Fixture triage case"
+  failureType: OOMKilled
+  mode: triage
+  logs:
+    - "ERROR worker pod OOMKilled (memory limit exceeded)"
+  context: "INC-9001: worker OOMKilled under load"
+  expectations:
+    rootCauseMustInclude: ["OOMKilled", "memory"]
+    remediationMustInclude: ["memory limit"]
+    forbiddenClaims: ["disk full"]

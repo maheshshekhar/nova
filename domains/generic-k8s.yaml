@@ -1,0 +1,28 @@
+# Generic Kubernetes — a domain-free pack. Carries NO business vocabulary; it is
+# the neutral baseline (and the fixture the leak test asserts against). All
+# promptVars are omitted so the schema's neutral defaults apply — no other
+# domain's wording can leak through.
+domain:
+  id: generic-k8s
+  displayName: "Generic Kubernetes"
+
+  glossary:
+    - term: pod
+      meaning: "the smallest deployable unit of compute in Kubernetes"
+    - term: namespace
+      meaning: "a logical partition that scopes a set of workloads"
+
+  services:
+    - { name: api-gateway, tier: 1, owner: platform-team }
+    - { name: worker, tier: 2, owner: platform-team }
+
+  # Impact = any error-level line (a sensible default for an unknown domain).
+  impactSignal:
+    match: { level: ERROR }
+    unit: "error events"
+
+  severityRules:
+    - { when: { errorRatePct: ">5" }, severity: critical }
+    - { when: { errorRatePct: ">1" }, severity: high }
+
+  failureTypes: [OOMKilled, CrashLoopBackOff, config-missing]

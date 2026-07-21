@@ -1,0 +1,41 @@
+# Payments Platform — the reference Domain Pack.
+#
+# Point nova.config.yaml at this file to make Nova reason about the payments
+# domain. Its promptVars reproduce Nova's built-in default wording, so selecting
+# this pack is behaviour-identical to running with no `domain:` configured — the
+# glossary + service catalog below are the only additions (they surface a domain
+# grounding block in the assistant/RCA context).
+domain:
+  id: payments
+  displayName: "Payments Platform"
+
+  glossary:
+    - term: checkout
+      meaning: "the customer payment-completion flow served by payment-service"
+    - term: connection pool
+      meaning: "the bounded set of Postgres connections each payment-service pod may hold"
+
+  services:
+    - { name: payment-service, tier: 1, owner: payments-team, dependsOn: [postgres, transaction-service] }
+    - { name: transaction-service, tier: 2, owner: payments-team, dependsOn: [postgres] }
+    - { name: config-service, tier: 3, owner: platform-team }
+
+  # What "customer impact" means here: the checkout-503 cascade.
+  impactSignal:
+    match:
+      pattern: "503|service unavailable|pool\\.connect\\(\\)\\s*timeout|too many connections"
+    unit: "failed checkout transactions"
+
+  severityRules:
+    - { when: { errorRatePct: ">5" }, severity: critical }
+    - { when: { errorRatePct: ">1" }, severity: high }
+
+  # Wording merged into the prompt templates — reproduces the built-in default.
+  promptVars:
+    remediationGuidance: "Known remediation playbook for this service: scale payment-service to 6 replicas and stop the load-generator Job. All workloads run in the Kubernetes namespace `production` — always use `-n production` (never `prod` or `default`) in kubectl commands, e.g. `kubectl scale deployment payment-service --replicas=6 -n production` and `kubectl delete job load-generator -n production`. If the evidence supports it, lead with this as remediation step 1."
+    namespaceGuidance: "All Kubernetes workloads run in the namespace `production` — whenever you reference a kubectl command or namespace, use `production` exactly (never `prod` or `default`)."
+    rootCauseHint: "(the connection-pool exhaustion cascade)"
+    resolutionHint: "reference stopping the load and scaling to 6 replicas"
+
+  failureTypes: [db-pool-exhaustion, gateway-decline, settlement-lag]
+  runbooks: ./domains/payments/runbooks/

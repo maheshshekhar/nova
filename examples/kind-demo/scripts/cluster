@@ -1,0 +1,528 @@
+#!/bin/bash
+set -e
+
+# ── Colors ────────────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+log()     { echo -e "${CYAN}[SETUP]${NC} $1"; }
+success() { echo -e "${GREEN}[OK]${NC} $1"; }
+warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error()   { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+
+CLUSTER_NAME="nova-platform"
+# Application workloads (payment-service, config-service, transaction-service,
+# load-generator) run here.
+APP_NAMESPACE="production"
+# Postgres runs in its own namespace so deleting `production` (to redeploy the
+# app from scratch) never tears down the database.
+DB_NAMESPACE="db-postgres"
+# Observability stack (dashboard, metrics-collector) runs here.
+MON_NAMESPACE="nova-monitoring"
+
+# Host folder that persists the incident store across teardown/setup. It is
+# bind-mounted into every KinD node (extraMounts) and then hostPath-mounted into
+# the dashboard pod at /data. Deleting this folder is what actually wipes the data.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+DATA_DIR="${PROJECT_ROOT}/data"
+
+# Run from the project root so all relative k8s/... paths resolve regardless of
+# the caller's working directory.
+cd "$PROJECT_ROOT"
+
+echo ""
+echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
+echo -e "${CYAN}║   DevOps Monitoring Cluster Setup      ║${NC}"
+echo -e "${CYAN}║   AI-Augmented DevOps.                 ║${NC}"
+echo -e "${CYAN}╚════════════════════════════════════════╝${NC}"
+echo ""
+
+# ── Prerequisites check ───────────────────────────────────────────────────────
+log "Checking prerequisites..."
+
+command -v docker >/dev/null 2>&1 || error "Docker not found. Install Docker Desktop."
+command -v kind >/dev/null 2>&1   || error "KinD not found. Run: brew install kind"
+command -v kubectl >/dev/null 2>&1 || error "kubectl not found. Run: brew install kubectl"
+
+# Unset platform override — KinD node runs as amd64 under Rosetta on M1
+unset DOCKER_DEFAULT_PLATFORM
+
+success "All prerequisites found"
+
+# ── Create KinD cluster ───────────────────────────────────────────────────────
+log "Creating KinD cluster: ${CLUSTER_NAME}..."
+
+if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
+  warn "Cluster '${CLUSTER_NAME}' already exists — skipping creation"
+else
+  # Ensure the persistent data folder exists (world-writable so the non-root
+  # dashboard container — uid 1001 — can write the incident store).
+  mkdir -p "${DATA_DIR}"
+  chmod 777 "${DATA_DIR}"
+  log "Persistent incident store: ${DATA_DIR} (mounted into pods at /data)"
+
+  cat <<EOF | kind create cluster --name "${CLUSTER_NAME}" --config=-
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.29.2
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 30000
+        hostPort: 3000
+        protocol: TCP
+    extraMounts:
+      - hostPath: ${DATA_DIR}
+        containerPath: /mnt/dashboard-data
+  - role: worker
+    image: kindest/node:v1.29.2
+    extraMounts:
+      - hostPath: ${DATA_DIR}
+        containerPath: /mnt/dashboard-data
+  - role: worker
+    image: kindest/node:v1.29.2
+    extraMounts:
+      - hostPath: ${DATA_DIR}
+        containerPath: /mnt/dashboard-data
+EOF
+  success "KinD cluster created"
+fi
+
+# Explicitly set kubectl context — ensures idempotency on re-runs
+kind export kubeconfig --name "${CLUSTER_NAME}"
+success "kubectl context configured"
+
+# Wait for API server to be ready before proceeding
+log "Waiting for Kubernetes API server to be ready..."
+for i in $(seq 1 30); do
+  if kubectl cluster-info >/dev/null 2>&1; then
+    success "API server is ready"
+    break
+  fi
+  if [ "$i" -eq 30 ]; then
+    error "API server did not become ready in time"
+  fi
+  sleep 2
+done
+
+# ── Install metrics-server ────────────────────────────────────────────────────
+log "Installing metrics-server (required for pod CPU/memory metrics)..."
+
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+# Patch metrics-server to work with KinD (disable TLS verification)
+kubectl patch deployment metrics-server \
+  -n kube-system \
+  --type=json \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' \
+  2>/dev/null || true
+
+success "metrics-server installed"
+
+# ── Create namespaces ──────────────────────────────────────────────
+log "Creating namespaces: ${MON_NAMESPACE}, ${APP_NAMESPACE}..."
+kubectl apply -f examples/kind-demo/k8s/namespace.yaml
+success "Namespaces ready"
+
+# ── Create AI keys secret ────────────────────────────────────────
+log "Creating AI keys secret..."
+
+if [ -f "examples/kind-demo/k8s/secret.yaml" ]; then
+  kubectl apply -f examples/kind-demo/k8s/secret.yaml
+  success "AI keys secret applied from examples/kind-demo/k8s/secret.yaml"
+else
+  warn "examples/kind-demo/k8s/secret.yaml not found — creating empty secret"
+  warn "Run: cp examples/kind-demo/k8s/secret.yaml.template examples/kind-demo/k8s/secret.yaml"
+  warn "Then fill in your API keys and run: kubectl apply -f examples/kind-demo/k8s/secret.yaml"
+  for ns in "${MON_NAMESPACE}" "${APP_NAMESPACE}"; do
+    kubectl create secret generic ai-keys \
+      --namespace="${ns}" \
+      --from-literal=OPENROUTER_API_KEY="" \
+      --from-literal=ANTHROPIC_API_KEY="" \
+      --dry-run=client -o yaml | kubectl apply -f -
+  done
+fi
+
+# ── Build Docker images ───────────────────────────────────────────────────────
+log "Building Docker images..."
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+CACHE_DIR="${PROJECT_ROOT}/.build-cache"
+
+mkdir -p "${CACHE_DIR}"
+
+cd "$PROJECT_ROOT"
+
+# Helper: build image if source is newer than last successful build timestamp
+# Usage: build_if_changed <image-tag> <cache-key> <dockerfile> <context> <source-dirs...>
+build_if_changed() {
+  local IMAGE_TAG="$1"
+  local CACHE_KEY="$2"
+  local DOCKERFILE="$3"
+  local CONTEXT="$4"
+  shift 4
+  local SOURCE_DIRS=("$@")
+
+  local STAMP="${CACHE_DIR}/${CACHE_KEY}.stamp"
+
+  # Check if image exists at all
+  if ! docker image inspect "${IMAGE_TAG}" >/dev/null 2>&1; then
+    log "Building ${IMAGE_TAG} (no image found)..."
+    docker build -t "${IMAGE_TAG}" -f "${DOCKERFILE}" "${CONTEXT}" \
+      || error "Build failed: ${IMAGE_TAG}"
+    touch "${STAMP}"
+    success "${IMAGE_TAG} built"
+    return
+  fi
+
+  # Check if any source file or Dockerfile is newer than the stamp
+  if [ ! -f "${STAMP}" ]; then
+    log "Building ${IMAGE_TAG} (no build stamp found)..."
+    docker build -t "${IMAGE_TAG}" -f "${DOCKERFILE}" "${CONTEXT}" \
+      || error "Build failed: ${IMAGE_TAG}"
+    touch "${STAMP}"
+    success "${IMAGE_TAG} built"
+    return
+  fi
+
+  # Find any file newer than the stamp
+  local NEWER
+  NEWER=$(find "${DOCKERFILE}" "${SOURCE_DIRS[@]}" -newer "${STAMP}" 2>/dev/null | head -1)
+
+  if [ -n "${NEWER}" ]; then
+    log "Building ${IMAGE_TAG} (changed: ${NEWER})..."
+    docker build -t "${IMAGE_TAG}" -f "${DOCKERFILE}" "${CONTEXT}" \
+      || error "Build failed: ${IMAGE_TAG}"
+    touch "${STAMP}"
+    success "${IMAGE_TAG} built"
+  else
+    warn "${IMAGE_TAG} up to date — skipping build"
+  fi
+}
+
+# Dashboard — rebuild if any .ts/.tsx or Dockerfile changed
+build_if_changed \
+  "nova/dashboard:latest" \
+  "dashboard" \
+  "Dockerfile" \
+  "." \
+  "app" "components" "lib" "hooks"
+
+# Payment-service — rebuild if any .js or Dockerfile changed
+build_if_changed \
+  "nova/payment-service:latest" \
+  "payment-service" \
+  "examples/kind-demo/payment-service/Dockerfile" \
+  "examples/kind-demo/payment-service" \
+  "examples/kind-demo/payment-service"
+
+# Metrics-collector — rebuild if any .ts or Dockerfile changed
+cd examples/kind-demo/metrics-collector && npm install --silent && cd "$PROJECT_ROOT"
+build_if_changed \
+  "nova/metrics-collector:latest" \
+  "metrics-collector" \
+  "examples/kind-demo/metrics-collector/Dockerfile" \
+  "examples/kind-demo/metrics-collector" \
+  "examples/kind-demo/metrics-collector/src"
+
+# Load-generator — rebuild if any .js or Dockerfile changed
+build_if_changed \
+  "nova/load-generator:latest" \
+  "load-generator" \
+  "examples/kind-demo/load-generator/Dockerfile" \
+  "examples/kind-demo/load-generator" \
+  "examples/kind-demo/load-generator"
+
+# Config-service — rebuild if any .js or Dockerfile changed
+build_if_changed \
+  "nova/config-service:latest" \
+  "config-service" \
+  "examples/kind-demo/config-service/Dockerfile" \
+  "examples/kind-demo/config-service" \
+  "examples/kind-demo/config-service"
+
+# Transaction-service — rebuild if any .js or Dockerfile changed
+build_if_changed \
+  "nova/transaction-service:latest" \
+  "transaction-service" \
+  "examples/kind-demo/transaction-service/Dockerfile" \
+  "examples/kind-demo/transaction-service" \
+  "examples/kind-demo/transaction-service"
+
+# ── Load images into KinD ─────────────────────────────────────────────────────
+log "Loading images into KinD cluster..."
+
+IMAGES_IN_CLUSTER=$(docker exec ${CLUSTER_NAME}-control-plane \
+  crictl images 2>/dev/null || echo "")
+
+load_if_needed() {
+  local IMAGE_TAG="$1"
+  local CACHE_KEY="$2"
+  local STAMP="${CACHE_DIR}/${CACHE_KEY}.stamp"
+  local LOAD_STAMP="${CACHE_DIR}/${CACHE_KEY}.loaded"
+
+  # Always load if image was just built (stamp newer than load stamp)
+  # or if image not in cluster
+  local NEEDS_LOAD=false
+
+  if [ ! -f "${LOAD_STAMP}" ]; then
+    NEEDS_LOAD=true
+  elif [ "${STAMP}" -nt "${LOAD_STAMP}" ]; then
+    # Image was rebuilt since last load
+    NEEDS_LOAD=true
+  elif ! echo "$IMAGES_IN_CLUSTER" | grep -q "${IMAGE_TAG%%:*}"; then
+    # Image not in cluster
+    NEEDS_LOAD=true
+  fi
+
+  if [ "$NEEDS_LOAD" = true ]; then
+    log "Loading ${IMAGE_TAG} into KinD..."
+    kind load docker-image "${IMAGE_TAG}" --name "${CLUSTER_NAME}"
+    touch "${LOAD_STAMP}"
+    success "${IMAGE_TAG} loaded"
+  else
+    warn "${IMAGE_TAG} already in cluster — skipping load"
+  fi
+}
+
+load_if_needed "nova/dashboard:latest" "dashboard"
+load_if_needed "nova/payment-service:latest" "payment-service"
+load_if_needed "nova/metrics-collector:latest" "metrics-collector"
+load_if_needed "nova/load-generator:latest" "load-generator"
+load_if_needed "nova/config-service:latest" "config-service"
+load_if_needed "nova/transaction-service:latest" "transaction-service"
+
+# ── Deploy services ───────────────────────────────────────────────────────────
+# NOTE: The application workloads (payment-service, config-service,
+# transaction-service) are intentionally NOT deployed here. This script only
+# stands up the infra + observability stack. Deploy the application afterwards
+# with ./scripts/deploy-app (their images are still built + loaded above so
+# deploy-app can roll them out immediately).
+log "Deploying infra + observability services to cluster..."
+
+kubectl apply -f examples/kind-demo/k8s/postgres.yaml
+kubectl apply -f examples/kind-demo/k8s/metrics-collector.yaml
+# Observability / log pipeline — Loki (store + ruler), Fluent Bit (shipper),
+# Alertmanager (log-driven alert routing) and Grafana (log-viewing UI). These
+# live in nova-monitoring, decoupled from the production workloads, so deleting
+# and redeploying the production namespace never disturbs them.
+kubectl apply -f examples/kind-demo/k8s/loki.yaml
+kubectl apply -f examples/kind-demo/k8s/loki-rules.yaml
+kubectl apply -f examples/kind-demo/k8s/fluent-bit.yaml
+kubectl apply -f examples/kind-demo/k8s/alertmanager.yaml
+kubectl apply -f examples/kind-demo/k8s/grafana.yaml
+kubectl apply -f examples/kind-demo/k8s/dashboard-rbac.yaml
+kubectl apply -f examples/kind-demo/k8s/dashboard.yaml
+
+success "All manifests applied"
+
+# ── Wait for deployments ──────────────────────────────────────────────────────
+log "Waiting for postgres to be ready..."
+kubectl wait --for=condition=available \
+  deployment/postgres \
+  -n "${DB_NAMESPACE}" \
+  --timeout=120s
+
+log "Waiting for metrics-collector to be ready..."
+kubectl wait --for=condition=available \
+  deployment/metrics-collector \
+  -n "${MON_NAMESPACE}" \
+  --timeout=120s
+
+log "Waiting for Loki to be ready..."
+kubectl wait --for=condition=available \
+  deployment/loki \
+  -n "${MON_NAMESPACE}" \
+  --timeout=180s
+
+log "Waiting for Alertmanager and Grafana to be ready..."
+kubectl wait --for=condition=available \
+  deployment/alertmanager \
+  deployment/grafana \
+  -n "${MON_NAMESPACE}" \
+  --timeout=120s
+
+log "Waiting for Fluent Bit DaemonSet to roll out..."
+kubectl rollout status daemonset/fluent-bit \
+  -n "${MON_NAMESPACE}" \
+  --timeout=120s || warn "Fluent Bit not fully ready yet — logs may lag briefly"
+
+log "Waiting for dashboard to be ready..."
+kubectl wait --for=condition=available \
+  deployment/dashboard \
+  -n "${MON_NAMESPACE}" \
+  --timeout=180s
+
+success "All deployments ready"
+
+# ── Verify ────────────────────────────────────────────────────────────────────
+log "Running verification..."
+bash "$(dirname "$0")/verify"
+
+# ── Serve: port-forward + HTTPS at https://nova and https://grafana ───────────
+# Starts the dashboard (and Grafana) port-forwards in the background and (if
+# mkcert + caddy are installed) serves locally-trusted https://nova and
+# https://grafana via Caddy. The mkcert certs are generated only when missing, so
+# they are reused across `teardown` runs.
+HOSTS_ENTRY_HINT="127.0.0.1    nova grafana alertmanager"
+PORTFORWARD_LOG="/tmp/nova-portforward.log"
+GRAFANA_PORTFORWARD_LOG="/tmp/nova-grafana-portforward.log"
+ALERTMANAGER_PORTFORWARD_LOG="/tmp/nova-alertmanager-portforward.log"
+
+log "Starting dashboard port-forward on localhost:3000 (background)..."
+kubectl wait --for=condition=ready \
+  pod -l app=dashboard \
+  -n "${MON_NAMESPACE}" \
+  --timeout=60s
+
+# Stop any stale port-forward before starting a fresh one
+pkill -f "port-forward service/dashboard" 2>/dev/null || true
+
+nohup kubectl port-forward service/dashboard 3000:3000 \
+  --namespace="${MON_NAMESPACE}" \
+  > "${PORTFORWARD_LOG}" 2>&1 &
+disown 2>/dev/null || true
+
+# Wait until :3000 responds before wiring up Caddy
+for i in $(seq 1 15); do
+  if curl -sf -o /dev/null "http://localhost:3000/overview"; then
+    success "Port-forward is up (logs: ${PORTFORWARD_LOG})"
+    break
+  fi
+  if [ "$i" -eq 15 ]; then
+    warn "Port-forward not confirmed on :3000 yet — check ${PORTFORWARD_LOG}"
+  fi
+  sleep 1
+done
+
+# Grafana port-forward on localhost:3001 (background) — Caddy proxies
+# https://grafana → localhost:3001 → grafana Service.
+log "Starting Grafana port-forward on localhost:3001 (background)..."
+pkill -f "port-forward service/grafana" 2>/dev/null || true
+nohup kubectl port-forward service/grafana 3001:3000 \
+  --namespace="${MON_NAMESPACE}" \
+  > "${GRAFANA_PORTFORWARD_LOG}" 2>&1 &
+disown 2>/dev/null || true
+
+# Alertmanager port-forward on localhost:9093 (background) — Caddy proxies
+# https://alertmanager → localhost:9093 → alertmanager Service.
+log "Starting Alertmanager port-forward on localhost:9093 (background)..."
+pkill -f "port-forward service/alertmanager" 2>/dev/null || true
+nohup kubectl port-forward service/alertmanager 9093:9093 \
+  --namespace="${MON_NAMESPACE}" \
+  > "${ALERTMANAGER_PORTFORWARD_LOG}" 2>&1 &
+disown 2>/dev/null || true
+
+if command -v mkcert >/dev/null 2>&1 && command -v caddy >/dev/null 2>&1; then
+  log "Setting up trusted HTTPS at https://nova..."
+
+  # Warn if the hosts entry is missing (we don't edit /etc/hosts automatically)
+  if ! grep -qE "^[^#]*[[:space:]]nova([[:space:]]|$)" /etc/hosts 2>/dev/null; then
+    warn "No 'nova' entry found in /etc/hosts."
+    warn "Add this line to reach https://nova + https://grafana:  sudo sh -c 'echo \"${HOSTS_ENTRY_HINT}\" >> /etc/hosts'"
+  elif ! grep -qE "^[^#]*[[:space:]]grafana([[:space:]]|$)" /etc/hosts 2>/dev/null; then
+    warn "No 'grafana' entry found in /etc/hosts."
+    warn "Add 'grafana' to reach https://grafana:  sudo sh -c 'echo \"${HOSTS_ENTRY_HINT}\" >> /etc/hosts'"
+  elif ! grep -qE "^[^#]*[[:space:]]alertmanager([[:space:]]|$)" /etc/hosts 2>/dev/null; then
+    warn "No 'alertmanager' entry found in /etc/hosts."
+    warn "Add 'alertmanager' to reach https://alertmanager:  sudo sh -c 'echo \"${HOSTS_ENTRY_HINT}\" >> /etc/hosts'"
+  fi
+
+  # Ensure mkcert's local CA is installed in the system/browser trust store
+  mkcert -install >/dev/null 2>&1 || warn "mkcert -install failed — cert may not be trusted"
+
+  # Generate the certs only if missing (reused across teardowns — no rate limits)
+  mkdir -p "${PROJECT_ROOT}/certs"
+  if [ -f "${PROJECT_ROOT}/certs/nova.pem" ] && [ -f "${PROJECT_ROOT}/certs/nova-key.pem" ]; then
+    success "Existing certs/nova.pem reused"
+  else
+    log "Generating locally-trusted cert for nova..."
+    mkcert -cert-file "${PROJECT_ROOT}/certs/nova.pem" \
+           -key-file "${PROJECT_ROOT}/certs/nova-key.pem" \
+           nova \
+      && success "Cert generated at certs/nova.pem"
+  fi
+
+  # Grafana cert — Caddy loads the whole Caddyfile (nova + grafana), so this must
+  # exist before Caddy starts or the config fails to load.
+  if [ -f "${PROJECT_ROOT}/certs/grafana.pem" ] && [ -f "${PROJECT_ROOT}/certs/grafana-key.pem" ]; then
+    success "Existing certs/grafana.pem reused"
+  else
+    log "Generating locally-trusted cert for grafana..."
+    mkcert -cert-file "${PROJECT_ROOT}/certs/grafana.pem" \
+           -key-file "${PROJECT_ROOT}/certs/grafana-key.pem" \
+           grafana \
+      && success "Cert generated at certs/grafana.pem"
+  fi
+
+  # Alertmanager cert — Caddy loads the whole Caddyfile (nova + grafana +
+  # alertmanager), so this must exist before Caddy starts or the config fails to load.
+  if [ -f "${PROJECT_ROOT}/certs/alertmanager.pem" ] && [ -f "${PROJECT_ROOT}/certs/alertmanager-key.pem" ]; then
+    success "Existing certs/alertmanager.pem reused"
+  else
+    log "Generating locally-trusted cert for alertmanager..."
+    mkcert -cert-file "${PROJECT_ROOT}/certs/alertmanager.pem" \
+           -key-file "${PROJECT_ROOT}/certs/alertmanager-key.pem" \
+           alertmanager \
+      && success "Cert generated at certs/alertmanager.pem"
+  fi
+
+  # Generate the Caddyfile on the fly (only needed for local HTTPS, so it is not
+  # committed). Cert paths are relative to Caddy's cwd, which is the repo root.
+  CADDYFILE="${PROJECT_ROOT}/certs/Caddyfile"
+  cat > "${CADDYFILE}" <<'CADDY'
+nova {
+	tls certs/nova.pem certs/nova-key.pem
+	reverse_proxy localhost:3000
+}
+
+grafana {
+	tls certs/grafana.pem certs/grafana-key.pem
+	reverse_proxy localhost:3001
+}
+
+alertmanager {
+	tls certs/alertmanager.pem certs/alertmanager-key.pem
+	reverse_proxy localhost:9093
+}
+CADDY
+
+  # Start (or reload) Caddy in the background. Binding :443 requires sudo.
+  log "Starting Caddy reverse proxy (needs sudo for port 443)..."
+  if sudo caddy start --config "${CADDYFILE}" 2>/dev/null; then
+    success "Caddy started — https://nova and https://grafana are live"
+  else
+    sudo caddy reload --config "${CADDYFILE}" 2>/dev/null \
+      && success "Caddy reloaded — https://nova and https://grafana are live" \
+      || warn "Could not start Caddy — check 'sudo caddy start --config ${CADDYFILE}'"
+  fi
+else
+  warn "mkcert and/or caddy not installed — skipping HTTPS setup."
+  warn "Install with: brew install mkcert caddy   (dashboard still available at http://localhost:3000, Grafana at http://localhost:3001, Alertmanager at http://localhost:9093)"
+fi
+
+echo ""
+echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║   Cluster setup complete!              ║${NC}"
+echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
+echo ""
+echo -e "Dashboard:  ${GREEN}https://nova/overview${NC}"
+echo -e "Grafana:    ${GREEN}https://grafana${NC}  (logs deep-dive over Loki)"
+echo -e "Alertmanager: ${GREEN}https://alertmanager${NC}  (log-driven alert routing)"
+echo ""
+# Next steps (port-forward is now started automatically by this script):
+#   1. Start port-forward:  ./scripts/port-forward
+#   2. Open dashboard:      http://localhost:3000/overview
+#   3. When ready to trigger:  ./scripts/inject-failure
+#   4. After Claude RCA:    ./scripts/recover

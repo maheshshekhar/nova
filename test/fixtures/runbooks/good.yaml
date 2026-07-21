@@ -1,0 +1,17 @@
+id: GOOD-RB
+title: "A valid fixture runbook"
+failureTypes: [OOMKilled]
+services: [worker]
+domain: generic-k8s
+symptom: "pods restarting"
+diagnosis: "memory pressure"
+steps:
+  - "increase memory limit"
+  - "roll the deployment"
+approvalPrompt: "Approve rolling restart?"
+eta: "~1m"
+action:
+  type: http-webhook
+  operation: restart
+  url: https://example.test/hook
+  requiresApproval: true

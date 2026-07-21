@@ -1,0 +1,22 @@
+Nova has been deployed.
+
+1. Wait for the pod to become ready:
+   kubectl get pods -l "app.kubernetes.io/instance={{ .Release.Name }}" -w
+
+2. Reach the dashboard:
+{{- if .Values.ingress.enabled }}
+   http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}/overview
+{{- else }}
+   kubectl port-forward svc/{{ include "nova.fullname" . }} 3000:{{ .Values.service.port }}
+   open http://localhost:3000/overview
+{{- end }}
+
+Config is mounted from the ConfigMap at /app/nova.config.yaml.
+Secrets are read from the Secret "{{ include "nova.secretName" . }}".
+{{- if not .Values.secret.existingSecret }}
+{{- if not .Values.secret.data.OPENROUTER_API_KEY }}
+
+WARNING: No AI API key was provided. Set secret.data.OPENROUTER_API_KEY (or
+point secret.existingSecret at your own Secret) so the AI features work.
+{{- end }}
+{{- end }}

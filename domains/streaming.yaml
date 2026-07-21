@@ -1,0 +1,31 @@
+# Video Streaming — a second worked example proving Nova is domain-agnostic. A
+# single file flips impact, severity, vocabulary and remediation wording with no
+# code change. See docs/domain-runbooks-settings-plan.md Part 1.
+domain:
+  id: streaming
+  displayName: "Video Streaming"
+
+  glossary:
+    - { term: rebuffer, meaning: "playback stall while the buffer refills" }
+    - { term: CDN origin miss, meaning: "segment not cached, fetched from origin" }
+
+  services:
+    - { name: playback-api, tier: 1, owner: streaming-team, dependsOn: [cdn, transcoder] }
+    - { name: transcoder, tier: 2, owner: media-team }
+
+  impactSignal:
+    match: { level: ERROR, pattern: "rebuffer|manifest 404|origin timeout" }
+    unit: "interrupted play sessions"
+
+  severityRules:
+    - { when: { errorRatePct: ">3" }, severity: critical }
+    - { when: { errorRatePct: ">1" }, severity: high }
+
+  promptVars:
+    remediationGuidance: "Prefer CDN failover and origin-shield scaling before restarting playback pods. Give specific kubectl commands where applicable."
+    namespaceGuidance: "Reference the streaming namespaces explicitly in any kubectl command."
+    rootCauseHint: "(the CDN origin / transcode backlog cascade)"
+    resolutionHint: "reference failing over the CDN and scaling the origin shield"
+
+  failureTypes: [cdn-origin-miss, transcode-backlog, manifest-error]
+  runbooks: ./domains/streaming/runbooks/

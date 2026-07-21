@@ -1,0 +1,63 @@
+# ── Loki ruler rules (log-driven detection) ───────────────────────────────────
+# Mounted into Loki at /loki/rules/fake (the "fake" tenant, auth disabled). Each
+# rule counts ERROR-class log lines over a short window and fires to Alertmanager,
+# which webhooks Nova's /api/alerts to open an incident. `for: 0s` + the global
+# 15s evaluation_interval means detection lands in ~15–45s. The inject scripts
+# remain the primary deterministic trigger; these rules are the autonomous
+# log-driven path and are made idempotent by /api/alerts + createIncident.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-rules
+  namespace: nova-monitoring
+  labels:
+    app: loki
+data:
+  rules.yaml: |
+    groups:
+      - name: nova-log-alerts
+        interval: 15s
+        rules:
+          - alert: PaymentServiceErrorSpike
+            expr: |
+              sum(count_over_time({namespace="production", app="payment-service"} |~ "(?i)(503 Service Unavailable|too many connections|waitQueueSize exceeded|pool exhausted|checkout aborted)" [1m])) > 20
+            for: 0s
+            labels:
+              service: payment-service
+              severity: critical
+              failure_type: db-pool-exhaustion
+            annotations:
+              summary: "payment-service — checkout failures detected in logs"
+              description: "Sustained ERROR/503 log spike for payment-service over the last minute (Loki ruler)."
+
+          - alert: ConfigServiceBootFailure
+            expr: |
+              sum(count_over_time({namespace="production", app="config-service"} |~ "(?i)(missing required|ERROR|fatal|boot failure)" [1m])) > 5
+            for: 0s
+            labels:
+              service: config-service
+              severity: high
+              failure_type: config-missing
+            annotations:
+              summary: "config-service — boot failure detected in logs"
+              description: "config-service is logging missing-config / fatal errors (Loki ruler)."
+
+          # ── DISABLED: TransactionServiceErrorSpike ──────────────────────────────
+          # Commented out because during a payment-service cascade, transaction-service
+          # shares the same exhausted Postgres and logs ERROR/timeout/failed lines,
+          # tripping this rule and opening a spurious, unresolvable 2nd incident.
+          # Its own path (inject-transaction-failure) self-reports via /api/incidents,
+          # so this rule isn't needed for that path.
+          # UNCOMMENT to exercise the autonomous Loki → Alertmanager → /api/alerts → incident flow,
+          # then resolve the created incident via: PATCH /api/incidents/<id> {"resolve": true}
+          # - alert: TransactionServiceErrorSpike
+          #   expr: |
+          #     sum(count_over_time({namespace="production", app="transaction-service"} |~ "(?i)(ERROR|deadlock|failed|timeout)" [1m])) > 10
+          #   for: 0s
+          #   labels:
+          #     service: transaction-service
+          #     severity: high
+          #     failure_type: db-pool-exhaustion
+          #   annotations:
+          #     summary: "transaction-service — elevated error rate detected in logs"
+          #     description: "Sustained ERROR log spike for transaction-service over the last minute (Loki ruler)."

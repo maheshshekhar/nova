@@ -1,0 +1,70 @@
+#!/bin/bash
+
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+NAMESPACE="production"
+DB_NAMESPACE="db-postgres"
+MON_NAMESPACE="nova-monitoring"
+PASS=0
+FAIL=0
+
+check() {
+  local name="$1"
+  local cmd="$2"
+  if eval "$cmd" >/dev/null 2>&1; then
+    echo -e "${GREEN}[PASS]${NC} $name"
+    ((PASS++))
+  else
+    echo -e "${RED}[FAIL]${NC} $name"
+    ((FAIL++))
+  fi
+}
+
+echo ""
+echo -e "${CYAN}[VERIFY]${NC} Checking cluster health..."
+echo ""
+
+check "KinD cluster running" \
+  "kind get clusters | grep nova-platform"
+
+check "production namespace exists" \
+  "kubectl get namespace production"
+
+check "nova-monitoring namespace exists" \
+  "kubectl get namespace nova-monitoring"
+
+check "db-postgres namespace exists" \
+  "kubectl get namespace db-postgres"
+
+check "postgres deployment ready" \
+  "kubectl get deployment postgres -n $DB_NAMESPACE | grep -E '1/1|Running'"
+
+check "metrics-collector deployment ready" \
+  "kubectl get deployment metrics-collector -n $MON_NAMESPACE | grep -E '1/1'"
+
+check "dashboard deployment ready" \
+  "kubectl get deployment dashboard -n $MON_NAMESPACE | grep -E '1/1'"
+
+check "ai-keys secret exists (nova-monitoring)" \
+  "kubectl get secret ai-keys -n $MON_NAMESPACE"
+
+check "ai-keys secret exists (production)" \
+  "kubectl get secret ai-keys -n $NAMESPACE"
+
+check "metrics-server running" \
+  "kubectl get deployment metrics-server -n kube-system | grep -E '1/1'"
+
+echo ""
+echo -e "Results: ${GREEN}${PASS} passed${NC}, ${RED}${FAIL} failed${NC}"
+
+if [ "$FAIL" -gt 0 ]; then
+  echo ""
+  echo "To debug: kubectl get pods -n $NAMESPACE  (and -n $MON_NAMESPACE)"
+  exit 1
+fi
+
+echo ""
+echo -e "${GREEN}Cluster is healthy and ready for use.${NC}"

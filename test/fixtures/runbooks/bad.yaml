@@ -1,0 +1,6 @@
+# Malformed on purpose: missing the required `id` and `failureTypes`. The store
+# must SKIP this file with a captured error, never crash.
+title: "Broken runbook"
+services: [worker]
+steps:
+  - "do something"

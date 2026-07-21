@@ -1,0 +1,60 @@
+#!/bin/bash
+
+RED='\033[0;31m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+DATA_DIR="${PROJECT_ROOT}/data"
+
+echo ""
+echo -e "${RED}Tearing down nova-platform cluster...${NC}"
+
+# Stop background port-forwards so ports 3000/3001/9093 are freed for the next setup.
+pkill -f "port-forward service/dashboard" 2>/dev/null || true
+pkill -f "port-forward service/grafana" 2>/dev/null || true
+pkill -f "port-forward service/alertmanager" 2>/dev/null || true
+
+# Stop the Caddy reverse proxy so port 443 is freed and no stale instances (with
+# an outdated Caddyfile) linger for the next setup. `caddy stop` handles the
+# graceful case; the pkill fallback sweeps up any duplicate `caddy run` processes
+# that piled up from repeated `caddy start` invocations. Caddy binds :443 via
+# sudo, so both need sudo to reach the root-owned processes.
+if command -v caddy >/dev/null 2>&1; then
+  sudo caddy stop 2>/dev/null || true
+fi
+sudo pkill -f "caddy run" 2>/dev/null || true
+
+kind delete cluster --name nova-platform
+
+# Remove all Docker images (and the build cache) EXCEPT the KinD node image, so the
+# next cluster run rebuilds every service image from scratch. This avoids the
+# stale-layer trap where Docker serves a cached `COPY index.js` layer and the pods
+# end up running old code. Any `kindest/node` image (any version) is preserved (it's
+# large and slow to re-pull). Set KEEP_IMAGES=1 to skip this (e.g. for a faster loop).
+if [ "${KEEP_IMAGES}" = "1" ]; then
+  echo -e "${CYAN}KEEP_IMAGES=1 — leaving Docker images/cache in place${NC}"
+else
+  echo -e "${CYAN}Removing Docker images (keeping kindest/node)...${NC}"
+  # List every image ID whose repo is NOT kindest/node, dedupe, force-remove.
+  docker images --format '{{.ID}} {{.Repository}}:{{.Tag}}' 2>/dev/null \
+    | grep -v 'kindest/node' \
+    | awk '{print $1}' | sort -u \
+    | xargs -r docker rmi -f 2>/dev/null || true
+  # Clear the BuildKit layer cache too — this is what actually causes stale rebuilds.
+  docker builder prune -f >/dev/null 2>&1 || true
+  echo -e "${CYAN}Docker images and build cache cleared.${NC}"
+fi
+
+# Wipe the persistent state so the next `cluster` run starts from a
+# clean slate: no leftover live incidents, no stale AI RCA log snapshots, no old
+# eval runs. The ~2-year seeded incident history is regenerated on first load, so
+# nothing important is lost. Set KEEP_DATA=1 to preserve it (e.g. for debugging).
+if [ "${KEEP_DATA}" = "1" ]; then
+  echo -e "${CYAN}KEEP_DATA=1 — preserving persistent store at ${DATA_DIR}${NC}"
+elif [ -d "${DATA_DIR}" ]; then
+  rm -rf "${DATA_DIR}"
+fi
+
+echo -e "${CYAN}Done. All cluster resources removed.${NC}"
+echo ""

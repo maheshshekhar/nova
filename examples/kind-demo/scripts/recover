@@ -1,0 +1,61 @@
+#!/bin/bash
+set -e
+
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+# shellcheck disable=SC2034
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# payment-service + load-generator run in the production namespace
+NAMESPACE="production"
+
+echo ""
+echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║   EXECUTING RECOVERY PLAN              ║${NC}"
+echo -e "${GREEN}║   AI-recommended remediation           ║${NC}"
+echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
+echo ""
+
+echo -e "${CYAN}[1/4]${NC} Stopping load generator..."
+kubectl delete job load-generator -n "${NAMESPACE}" --ignore-not-found
+sleep 3
+echo -e "${GREEN}[OK]${NC} Load generator stopped"
+
+echo ""
+echo -e "${CYAN}[2/4]${NC} Scaling payment-service from 3 to 6 replicas..."
+kubectl scale deployment payment-service \
+  --replicas=6 \
+  --namespace="${NAMESPACE}"
+# Replace the crash-looped pods with fresh ones so recovery is immediate instead
+# of waiting out their (exponential) CrashLoopBackOff back-off timers.
+kubectl rollout restart deployment/payment-service \
+  --namespace="${NAMESPACE}"
+echo -e "${GREEN}[OK]${NC} Scale + rollout issued"
+
+echo ""
+echo -e "${CYAN}[3/4]${NC} Waiting for new pods to be ready..."
+kubectl rollout status deployment/payment-service \
+  --namespace="${NAMESPACE}" \
+  --timeout=120s
+echo -e "${GREEN}[OK]${NC} All pods ready"
+
+echo ""
+echo -e "${CYAN}[4/4]${NC} Verifying recovery..."
+sleep 5
+
+POD_COUNT=$(kubectl get pods -n "${NAMESPACE}" \
+  -l app=payment-service \
+  --field-selector=status.phase=Running \
+  --no-headers | wc -l | tr -d ' ')
+
+echo ""
+echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║   Recovery complete                    ║${NC}"
+echo -e "${GREEN}║   payment-service pods: ${POD_COUNT}/6 running    ║${NC}"
+echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
+echo ""
+echo -e "Watch the dashboard go green: ${CYAN}http://localhost:3000/overview${NC}"
+echo ""
+
+kubectl get pods -n "${NAMESPACE}" -l app=payment-service

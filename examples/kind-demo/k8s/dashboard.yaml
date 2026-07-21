@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  namespace: nova-monitoring
+  labels:
+    app: dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dashboard
+  template:
+    metadata:
+      labels:
+        app: dashboard
+    spec:
+      serviceAccountName: dashboard-sa
+      # Ensure the host-mounted data dir is writable by the non-root app (uid 1001).
+      initContainers:
+        - name: fix-data-perms
+          image: busybox:1.36
+          command: ["sh", "-c", "mkdir -p /data && chown -R 1001:1001 /data && chmod -R 775 /data"]
+          volumeMounts:
+            - name: incident-data
+              mountPath: /data
+          securityContext:
+            runAsUser: 0
+      containers:
+        - name: dashboard
+          image: nova/dashboard:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 3000
+          env:
+            - name: METRICS_COLLECTOR_URL
+              value: "http://metrics-collector:3001"
+            - name: LOKI_URL
+              value: "http://loki:3100"
+            - name: DATA_DIR
+              value: "/data"
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-keys
+                  key: OPENROUTER_API_KEY
+                  optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-keys
+                  key: ANTHROPIC_API_KEY
+                  optional: true
+            - name: OPENROUTER_MODEL
+              value: "anthropic/claude-sonnet-4-6"
+            - name: ANTHROPIC_MODEL
+              value: "claude-sonnet-4-5-20251001"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /overview
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 5
+          volumeMounts:
+            - name: incident-data
+              mountPath: /data
+      volumes:
+        # hostPath resolves to the KinD node's /mnt/dashboard-data, which each node
+        # bind-mounts from the host ./data folder (see scripts/cluster).
+        # This is what persists incidents across pod restarts, redeploys and
+        # teardown+setup — until the host ./data folder is deleted.
+        - name: incident-data
+          hostPath:
+            path: /mnt/dashboard-data
+            type: DirectoryOrCreate
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard
+  namespace: nova-monitoring
+spec:
+  selector:
+    app: dashboard
+  ports:
+    - port: 3000
+      targetPort: 3000

@@ -1,0 +1,48 @@
+#!/bin/bash
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# transaction-service runs in the production namespace.
+NAMESPACE="production"
+SERVICE="transaction-service"
+DASHBOARD_URL="${DASHBOARD_URL:-http://localhost:3000}"
+
+echo ""
+echo -e "${RED}╔════════════════════════════════════════╗${NC}"
+echo -e "${RED}║   INJECTING FAILURE                    ║${NC}"
+echo -e "${RED}║   transaction-service — CrashLoop      ║${NC}"
+echo -e "${RED}╚════════════════════════════════════════╝${NC}"
+echo ""
+
+echo -e "${CYAN}[1/2]${NC} Crashing ${SERVICE} on startup (CRASH_ON_STARTUP=true)..."
+# The app exits on boot when this flag is set → CrashLoopBackOff.
+kubectl set env "deployment/${SERVICE}" -n "${NAMESPACE}" CRASH_ON_STARTUP=true
+
+echo -e "${CYAN}[2/2]${NC} Recording the incident on the dashboard..."
+STARTED=$(( $(date +%s) * 1000 ))
+curl -s -X POST "${DASHBOARD_URL}/api/incidents" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"title\": \"transaction-service pods failing readiness — CrashLoopBackOff\",
+    \"service\": \"transaction-service\",
+    \"severity\": \"high\",
+    \"status\": \"investigating\",
+    \"failureType\": \"probe-failure\",
+    \"startedAt\": ${STARTED},
+    \"affectedUsers\": 0,
+    \"description\": \"transaction-service pods are crash-looping on startup after a bad rollout, so the ledger transaction path is unavailable and readiness probes never pass.\"
+  }" >/dev/null && echo -e "${GREEN}[OK]${NC} Incident recorded" \
+  || echo -e "${YELLOW}[WARN]${NC} Could not reach dashboard at ${DASHBOARD_URL} — is the port-forward up?"
+
+echo ""
+echo -e "${YELLOW}transaction-service pods will enter CrashLoopBackOff shortly.${NC}"
+echo -e "Open the incident on the dashboard, then click ${GREEN}Approve & Run${NC} on the"
+echo -e "matched runbook (ROLLING-RESTART) to clear the fault and roll the deployment."
+echo ""
+echo -e "${CYAN}Watch the pods:${NC} kubectl get pods -n ${NAMESPACE} -l app=transaction-service -w"
+echo ""

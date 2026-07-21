@@ -1,0 +1,25 @@
+# Runbook authoring example (also the template in the docs). A runbook resolves
+# one or more failure types, optionally scoped to services + a domain. Omit the
+# `action:` block entirely for a manual/checklist-only runbook; any executable
+# action requires approval and is audit-logged.
+id: DB-POOL-SCALE
+title: "DB connection pool exhaustion — shed load & scale"
+failureTypes: [db-pool-exhaustion]
+services: [payment-service]
+domain: payments
+symptom: "5xx spikes on checkout; 'pool.connect() timeout' / 'too many connections' in logs."
+diagnosis: >
+  Sustained load exhausts the Postgres connection pool; new checkout requests are
+  rejected with 503 until pool headroom is restored.
+steps:
+  - "Identify and stop the traffic source causing the spike"
+  - "Scale the affected deployment to restore pool headroom"
+  - "Confirm error rate and latency return to baseline"
+approvalPrompt: "Approve: stop the load source and scale payment-service to 6 replicas?"
+eta: "~30s"
+action:
+  type: k8s
+  operation: scale
+  target: { kind: deployment, name: payment-service, namespace: production }
+  params: { replicas: 6 }
+  requiresApproval: true

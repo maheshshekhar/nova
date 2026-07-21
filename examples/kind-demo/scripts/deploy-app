@@ -1,0 +1,85 @@
+#!/bin/bash
+set -e
+
+# ── Colors ────────────────────────────────────────────────────────────────────
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+# shellcheck disable=SC2034
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# payment/config/transaction services live in the production namespace; postgres
+# lives in its own db-postgres namespace so deleting `production` never drops the DB.
+NAMESPACE="production"
+DB_NAMESPACE="db-postgres"
+
+# Directory of this script, so it works regardless of the caller's cwd
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+cd "$PROJECT_ROOT"
+
+echo ""
+echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║   DEPLOYING APPLICATION                ║${NC}"
+echo -e "${GREEN}║   postgres → payment / config / txn    ║${NC}"
+echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
+echo ""
+
+# ── 1. Deploy the database first ──────────────────────────────────────────────
+# payment-service must NOT start before postgres is accepting connections —
+# otherwise it errors on startup, reports "critical", and the dashboard trips a
+# (false) incident. So we deploy postgres and wait for it to be ready first.
+
+# Ensure the production namespace exists. Before a live-deployment run the
+# operator deletes the `production` namespace to show it coming up from scratch;
+# recreate it here so the workload manifests below have somewhere to land. The
+# observability stack lives in nova-monitoring and postgres lives in db-postgres,
+# so both are untouched by that delete.
+echo -e "${CYAN}[0/4]${NC} Ensuring production + db-postgres namespaces exist..."
+kubectl get namespace "${NAMESPACE}" >/dev/null 2>&1 || kubectl create namespace "${NAMESPACE}"
+kubectl get namespace "${DB_NAMESPACE}" >/dev/null 2>&1 || kubectl create namespace "${DB_NAMESPACE}"
+
+echo ""
+echo -e "${CYAN}[1/4]${NC} Deploying postgres (db-postgres namespace)..."
+kubectl apply -f examples/kind-demo/k8s/postgres.yaml
+
+echo ""
+echo -e "${CYAN}[2/4]${NC} Waiting for postgres to be ready (pg_isready)..."
+kubectl wait --for=condition=available \
+  deployment/postgres \
+  -n "${DB_NAMESPACE}" \
+  --timeout=120s
+
+# Small settle buffer so the first client connections land cleanly
+sleep 5
+echo -e "${GREEN}[OK]${NC} postgres is ready"
+
+# ── 2. Deploy the payment-service ─────────────────────────────────────────────
+echo ""
+echo -e "${CYAN}[3/4]${NC} Deploying payment-service..."
+kubectl apply -f examples/kind-demo/k8s/payment-service.yaml
+kubectl rollout status deployment/payment-service \
+  --namespace="${NAMESPACE}" \
+  --timeout=120s
+echo -e "${GREEN}[OK]${NC} payment-service is ready"
+
+# ── 3. Deploy config-service + transaction-service ────────────────────────────
+# These do not depend on postgres, so they deploy after payment-service. Both
+# run in the production namespace alongside the other application workloads.
+echo ""
+echo -e "${CYAN}[4/4]${NC} Deploying config-service and transaction-service..."
+kubectl apply -f examples/kind-demo/k8s/config-service.yaml
+kubectl apply -f examples/kind-demo/k8s/transaction-service.yaml
+kubectl rollout status deployment/config-service \
+  --namespace="${NAMESPACE}" \
+  --timeout=120s
+kubectl rollout status deployment/transaction-service \
+  --namespace="${NAMESPACE}" \
+  --timeout=120s
+echo -e "${GREEN}[OK]${NC} config-service and transaction-service are ready"
+
+echo ""
+echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║   Application deployed                 ║${NC}"
+echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
+

@@ -1,0 +1,25 @@
+#!/bin/bash
+
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# The dashboard runs in the nova-monitoring namespace
+NAMESPACE="nova-monitoring"
+
+echo ""
+echo -e "${CYAN}Starting port-forward for dashboard...${NC}"
+echo -e "Dashboard will be available at: ${GREEN}http://localhost:3000${NC}"
+echo -e "Press Ctrl+C to stop"
+echo ""
+
+# Wait for dashboard pod to be ready
+kubectl wait --for=condition=ready \
+  pod -l app=dashboard \
+  -n "${NAMESPACE}" \
+  --timeout=60s
+
+kubectl port-forward \
+  service/dashboard \
+  3000:3000 \
+  --namespace="${NAMESPACE}"

@@ -1,0 +1,155 @@
+# ── Loki (single-binary) ──────────────────────────────────────────────────────
+# Central log store for Nova. Fluent Bit pushes production pod logs here; the
+# Nova dashboard and Grafana both query it via LogQL. Single-binary, filesystem
+# storage on an emptyDir with ~24h retention — right-sized for a KinD deployment (no
+# object store, no HA). The ruler is enabled so log-driven detection (P5) can fire
+# alerts to Alertmanager; the rules ConfigMap is mounted optionally so Loki starts
+# even before the rules exist.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+  namespace: nova-monitoring
+  labels:
+    app: loki
+data:
+  loki.yaml: |
+    auth_enabled: false
+
+    server:
+      http_listen_port: 3100
+      grpc_listen_port: 9096
+      log_level: warn
+
+    common:
+      path_prefix: /loki
+      replication_factor: 1
+      ring:
+        kvstore:
+          store: inmemory
+
+    schema_config:
+      configs:
+        - from: 2020-10-24
+          store: boltdb-shipper
+          object_store: filesystem
+          schema: v11
+          index:
+            prefix: index_
+            period: 24h
+
+    storage_config:
+      boltdb_shipper:
+        active_index_directory: /loki/index
+        cache_location: /loki/index_cache
+        shared_store: filesystem
+      filesystem:
+        directory: /loki/chunks
+
+    compactor:
+      working_directory: /loki/compactor
+      shared_store: filesystem
+      retention_enabled: true
+      compaction_interval: 10m
+      retention_delete_delay: 2h
+
+    limits_config:
+      retention_period: 24h
+      reject_old_samples: false
+      max_streams_per_user: 0
+      ingestion_rate_mb: 16
+      ingestion_burst_size_mb: 32
+
+    ruler:
+      storage:
+        type: local
+        local:
+          directory: /loki/rules
+      rule_path: /loki/rules-temp
+      alertmanager_url: http://alertmanager:9093
+      enable_alertmanager_v2: true
+      enable_api: true
+      ring:
+        kvstore:
+          store: inmemory
+      evaluation_interval: 15s
+      poll_interval: 1m
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loki
+  namespace: nova-monitoring
+  labels:
+    app: loki
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loki
+  template:
+    metadata:
+      labels:
+        app: loki
+    spec:
+      securityContext:
+        runAsUser: 0
+      containers:
+        - name: loki
+          image: grafana/loki:2.9.8
+          args:
+            - -config.file=/etc/loki/loki.yaml
+          ports:
+            - name: http
+              containerPort: 3100
+            - name: grpc
+              containerPort: 9096
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3100
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              memory: "512Mi"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/loki
+            - name: storage
+              mountPath: /loki
+            - name: rules
+              mountPath: /loki/rules/fake
+      volumes:
+        - name: config
+          configMap:
+            name: loki-config
+        - name: storage
+          emptyDir: {}
+        # Ruler rules for the "fake" tenant (auth disabled). Optional so Loki can
+        # start before P5 creates the loki-rules ConfigMap.
+        - name: rules
+          configMap:
+            name: loki-rules
+            optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+  namespace: nova-monitoring
+  labels:
+    app: loki
+spec:
+  selector:
+    app: loki
+  ports:
+    - name: http
+      port: 3100
+      targetPort: 3100
+    - name: grpc
+      port: 9096
+      targetPort: 9096

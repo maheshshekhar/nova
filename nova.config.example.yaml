@@ -1,0 +1,142 @@
+# Nova configuration — copy to `nova.config.yaml` and edit.
+#
+# Every value below is OPTIONAL: omit a section to accept its default (the
+# defaults reproduce Nova's current behaviour — file store, Loki, OpenRouter,
+# the `production` log scope). Secrets/URLs use ${ENV} interpolation and stay in
+# the environment, never in this file. `${VAR:-fallback}` supplies a fallback.
+
+# ── AI generation (RCA / triage / chat) ──────────────────────────────────────
+ai:
+  provider: openrouter          # openrouter | anthropic | openai | azure | ollama
+  # model: anthropic/claude-sonnet-4-6   # omit to use the provider's env default
+  apiKeyEnv: OPENROUTER_API_KEY
+  maxTokens: { triage: 400, rca: 4000, chat: 1200 }
+  temperature: 0
+
+# ── Logging backend ──────────────────────────────────────────────────────────
+logs:
+  provider: loki                # loki | elasticsearch | opensearch | mcp | cloudwatch | datadog | http | file
+  url: ${LOKI_URL:-http://loki:3100}
+  # Map your backend's fields onto Nova's logical dimensions:
+  fields: { namespace: namespace, service: app, level: level, message: message, timestamp: timestamp }
+  # WHERE Nova reads logs (backend-neutral). Declare an explicit include.
+  scope:
+    include:
+      - { namespace: production }
+    exclude:
+      - { service: load-generator }
+  defaultWindowMin: 30
+  maxEntries: 5000
+  # Experimental: consume any MCP server as a log backend (provider: mcp). Nova
+  # calls the tool directly — never via the LLM — so results stay deterministic.
+  # mcp:
+  #   transport: stdio          # stdio | http | sse
+  #   command: ["npx", "-y", "@grafana/mcp-server"]   # stdio
+  #   # url: https://mcp.internal/loki                 # http / sse
+  #   tool: query_range
+  #   argMap: { query: ${scope}, start: ${startMs}, end: ${endMs}, limit: ${limit} }
+  #   resultPath: data.result
+  #   scopeFormat: logql        # logql | json
+
+# ── Persistence (incidents / RCAs / eval runs) ───────────────────────────────
+persistence:
+  provider: file                # file | mongo | postgres | s3
+  seed: none                    # demo | none — 'none' starts with an empty store
+  # dataDir: /data              # file adapter; defaults to $DATA_DIR or ./data
+  # uri: ${MONGO_URI}           # mongo/postgres
+  # bucket: nova-data           # s3
+
+# ── Metrics (optional) ───────────────────────────────────────────────────────
+metrics:
+  provider: http                # prometheus | http | none
+  url: ${METRICS_COLLECTOR_URL:-http://metrics-collector:3001}
+
+# ── Detection & impact (generalises the checkout/503 counter) ────────────────
+detection:
+  autoDetect: true
+  source: alerts                # alerts | log-rule | metrics-threshold
+  impactSignal:
+    match: { level: ERROR, pattern: "5\\d\\d|timeout" }
+    label: failed requests
+  severityRules:
+    - { when: { errorRatePct: ">5" }, severity: critical }
+    - { when: { errorRatePct: ">2" }, severity: high }
+    - { when: { errorRatePct: ">0.5" }, severity: medium }
+    - { when: {}, severity: low }
+
+# ── Context assembly ─────────────────────────────────────────────────────────
+context:
+  maxTokens: 12000
+  providers:
+    - { id: incidents, enabled: true }
+    - { id: rcas, enabled: true }
+    - { id: logs, enabled: true }
+    - { id: metrics, enabled: true }
+    - { id: runbooks, enabled: true }
+    - { id: evals, enabled: true }
+  retrieval: { mode: dump }     # dump | filtered | vector
+
+# ── Prompts (editable templates) ─────────────────────────────────────────────
+prompts:
+  rca: ./prompts/rca.md
+  triage: ./prompts/triage.md
+  chat: ./prompts/chat-system.md
+  judge: ./prompts/judge.md
+  variables:
+    platform: Kubernetes
+    namespaceTerm: production
+
+# ── Evaluation & LLM-as-judge ────────────────────────────────────────────────
+eval:
+  enabled: true
+  judge:
+    provider: anthropic         # should differ from the generator to avoid self-scoring
+    # model: claude-opus-4-20250514
+    apiKeyEnv: ANTHROPIC_API_KEY
+    temperature: 0
+  scoring:
+    weights: { deterministic: 0.55, judge: 0.45 }
+    passThreshold: 0.8
+  gradeIncidents: true
+
+# ── Feature toggles ──────────────────────────────────────────────────────────
+features:
+  chat: true
+  eval: true
+  autoRemediation: false        # runbook shell/k8s execution — opt-in only
+
+# ── Notifications (outbound: Slack / PagerDuty / webhook) ─────────────────────
+# Fires on incident lifecycle events. Secrets are referenced by ENV VAR NAME and
+# resolved at send time — never stored in this file. Disabled by default.
+notifications:
+  enabled: false
+  dedupeWindowSec: 300          # suppress duplicate sends per incident+event
+  events: [incident.opened, incident.resolved, rca.generated]
+  channels:
+    - { id: slack-sre,   type: slack,     webhookUrlEnv: SLACK_SRE_WEBHOOK }
+    - { id: pd-payments, type: pagerduty, routingKeyEnv: PD_PAYMENTS_KEY }
+    # - { id: hook,   type: webhook,  urlEnv: NOVA_WEBHOOK_URL }
+    # - { id: teams,  type: msteams,  webhookUrlEnv: TEAMS_WEBHOOK }
+    # - { id: email-oncall, type: email, urlEnv: SMTP_URL, from: nova@example.com, to: [oncall@example.com] }
+  routes:
+    # First matching route wins; an empty `when` is the default.
+    - { when: { severity: [critical, high] }, channels: [pd-payments, slack-sre] }
+    - { when: {}, channels: [slack-sre] }
+  # Map a domain service `owner` → a channel (ownership-based paging).
+  ownerRouting:
+    payments-team: pd-payments
+  # Deep links in messages require NOVA_BASE_URL in the environment.
+  # Interactive inbound (verify request signatures before acting):
+  interactive:
+    slack:
+      enabled: false          # POST /api/slack/interactions ("Approve & Run" button)
+      signingSecretEnv: SLACK_SIGNING_SECRET
+      approvers: []           # Slack user ids allowed to approve remediation
+    pagerduty:
+      enabled: false          # POST /api/pagerduty/webhook (ack/resolve → incident)
+      secretEnv: PAGERDUTY_WEBHOOK_SECRET
+
+# ── Server ───────────────────────────────────────────────────────────────────
+server:
+  logLevel: info
+  port: 3000

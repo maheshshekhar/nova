@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+#
+# verify-impact — consistency guard for the single-source impact count (Tier 2).
+#
+# The recurring "fixed here, broke there" bugs came from the customer-impact figure
+# (failed checkout 503s) being computed independently on each surface, so the
+# overview, AI blast-radius and RCA showed DIFFERENT numbers. Tier 1 made the count
+# a single source of truth (lib/live-state.tsx -> frozen into the record's
+# affectedUsers). This guard asserts that invariant at the data layer: for every
+# incident that has a generated RCA, the impact figure quoted inside the RCA
+# document (and its context) matches the record's canonical affectedUsers.
+#
+# Usage:
+#   scripts/verify-impact                 # checks http://localhost:3000
+#   BASE_URL=https://nova scripts/verify-impact
+#
+# Exit code 0 = all consistent, 1 = a divergence was found (guard tripped).
+
+set -euo pipefail
+
+BASE_URL="${BASE_URL:-http://localhost:3000}"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "verify-impact: node is required but not found on PATH" >&2
+  exit 2
+fi
+
+BASE_URL="$BASE_URL" node - <<'NODE'
+const base = process.env.BASE_URL.replace(/\/+$/, "")
+
+// Strip thousands separators so "1,234" and "1234" compare equal.
+const num = (s) => Number(String(s).replace(/,/g, ""))
+
+// Pull every "customer impact" figure the RCA text asserts. These patterns mirror
+// the exact phrasings the RCA prompt/render can emit (see rca-document-modal.tsx
+// and app/api/analyze/route.ts). Every captured number must equal the canonical
+// affectedUsers — otherwise the document is telling two different stories.
+function impactFiguresInText(text) {
+  const out = []
+  const patterns = [
+    /Approximately\s+([\d,]+)\s+(?:failed\s+)?checkout/gi,
+    /([\d,]+)\s+checkout\s+transactions?\s+failed/gi,
+    /([\d,]+)\s+(?:failed\s+)?checkout\s+(?:requests?|transactions?)/gi,
+    /([\d,]+)\s+impacted\s+checkouts?/gi,
+    /([\d,]+)\s+failed\s+checkout\s+transactions?\s+\(HTTP\s*503\)/gi,
+  ]
+  for (const re of patterns) {
+    let m
+    while ((m = re.exec(text)) !== null) out.push(num(m[1]))
+  }
+  return out
+}
+
+async function main() {
+  const res = await fetch(`${base}/api/incidents?range=all`)
+  if (!res.ok) {
+    console.error(`verify-impact: GET /api/incidents failed (${res.status})`)
+    process.exit(2)
+  }
+  const { incidents = [] } = await res.json()
+
+  let checked = 0
+  const failures = []
+
+  for (const inc of incidents) {
+    const rca = inc.rca
+    if (!rca || !rca.text) continue // only incidents with a generated RCA are checkable
+    // The single-source figure is the payment cascade's checkout-503 impact.
+    if (inc.failureType !== "db-pool-exhaustion") continue
+
+    checked++
+    const canonical = num(inc.affectedUsers)
+    const problems = []
+
+    // 1) The RCA document must quote the canonical impact figure, and no other.
+    const figures = impactFiguresInText(rca.text)
+    const diverged = figures.filter((f) => f !== canonical)
+    if (diverged.length) {
+      problems.push(
+        `RCA text quotes impact ${[...new Set(diverged)].join(", ")} but record.affectedUsers = ${canonical}`
+      )
+    }
+
+    // 2) The context fed to the model must also carry the canonical figure.
+    if (rca.context && !new RegExp(`\\b${canonical.toLocaleString("en-US")}\\b`).test(rca.context) &&
+        !new RegExp(`\\b${canonical}\\b`).test(rca.context)) {
+      problems.push(`RCA context does not mention canonical impact ${canonical}`)
+    }
+
+    if (problems.length) {
+      failures.push({ id: inc.id, canonical, problems })
+    } else {
+      console.log(`  OK  ${inc.id.padEnd(10)} impact=${canonical} (RCA figures: ${figures.length ? [...new Set(figures)].join(",") : "none quoted"})`)
+    }
+  }
+
+  console.log("")
+  if (!checked) {
+    console.log("verify-impact: no db-pool-exhaustion incidents with an RCA to check yet.")
+    process.exit(0)
+  }
+  if (failures.length) {
+    console.error(`verify-impact: FAIL — impact figure diverges on ${failures.length}/${checked} incident(s):`)
+    for (const f of failures) {
+      console.error(`  ${f.id} (canonical ${f.canonical}):`)
+      for (const p of f.problems) console.error(`    - ${p}`)
+    }
+    process.exit(1)
+  }
+  console.log(`verify-impact: PASS — impact figure consistent across all ${checked} checked incident(s).`)
+}
+
+main().catch((e) => {
+  console.error("verify-impact: error", e)
+  process.exit(2)
+})
+NODE

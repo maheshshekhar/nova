@@ -1,0 +1,11 @@
+apiVersion: v2
+name: nova
+description: Nova — plug-and-play, AI-augmented DevOps incident platform
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/your-org/nova
+sources:
+  - https://github.com/your-org/nova
+maintainers:
+  - name: The Nova Authors

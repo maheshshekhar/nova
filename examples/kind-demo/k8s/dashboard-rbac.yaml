@@ -1,0 +1,43 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dashboard-sa
+  namespace: nova-monitoring
+
+---
+# Access to jobs + pods in the production namespace, where payment-service and
+# the load-generator run. The dashboard's /api/inject route (running in the
+# nova-monitoring namespace) uses this to create/delete the load-generator Job.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dashboard-role
+  namespace: production
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # Deployments — the /api/remediate route rolls / restores / scales
+  # config-service and transaction-service on runbook approval.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "patch", "update"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dashboard-rolebinding
+  namespace: production
+subjects:
+  - kind: ServiceAccount
+    name: dashboard-sa
+    namespace: nova-monitoring
+roleRef:
+  kind: Role
+  name: dashboard-role
+  apiGroup: rbac.authorization.k8s.io

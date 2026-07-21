@@ -1,0 +1,31 @@
+node_modules
+.env.local
+.env.development.local
+.env
+
+# Kubernetes secret with real API keys — never commit
+examples/kind-demo/k8s/secret.yaml
+
+# mkcert-generated TLS certs for https://nova — never commit (regenerated locally)
+certs/
+
+# Docker build cache stamps
+.build-cache/
+.next/
+coverage/
+
+# macOS junk (matches at any depth)
+.DS_Store
+
+# TypeScript — incremental cache + auto-generated Next types
+*.tsbuildinfo
+next-env.d.ts
+
+# Persistent incident store (local host volume mounted into KinD) — never commit
+data/
+data.old
+demo-qa.txt
+# Planning/refactor notes are ignored; forward-looking feature specs are tracked.
+docs/*
+!docs/notifications-plan.md
+!docs/mcp-adapters-plan.md
