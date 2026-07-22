@@ -1,0 +1,87 @@
+# ── Loki (grafana/loki chart, pinned 7.1.0 / Loki 3.6.8) ──────────────────────
+# Single-binary, filesystem storage, ruler enabled → Alertmanager. fullnameOverride
+# keeps the Service name exactly "loki" so `loki:3100` resolves for the dashboard
+# (LOKI_URL), Fluent Bit, Grafana's datasource and the Loki ruler — no app changes.
+fullnameOverride: loki
+deploymentMode: SingleBinary
+
+loki:
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+  limits_config:
+    retention_period: 24h
+    reject_old_samples: false
+    ingestion_rate_mb: 16
+    ingestion_burst_size_mb: 32
+  # Ruler → the `alertmanager:9093` alias Service (kube-prometheus-stack AM).
+  # Rules come from the loki-rules ConfigMap (applied as raw YAML) mounted at
+  # /etc/loki/rules/fake — the "fake" tenant, since auth is disabled.
+  rulerConfig:
+    storage:
+      type: local
+      local:
+        directory: /etc/loki/rules
+    rule_path: /tmp/loki/rules-temp
+    alertmanager_url: http://alertmanager:9093
+    enable_alertmanager_v2: true
+    enable_api: true
+    evaluation_interval: 15s
+    poll_interval: 1m
+
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: false
+  # The chart mounts no data volume when persistence is disabled and the root FS
+  # is read-only, so provide an ephemeral emptyDir at Loki's path_prefix
+  # (/var/loki) — matches the old raw manifest's emptyDir. The ruler rules for the
+  # "fake" tenant (auth disabled) are mounted read-only from the loki-rules CM.
+  extraVolumes:
+    - name: data
+      emptyDir: {}
+    - name: rules
+      configMap:
+        name: loki-rules
+        optional: true
+  extraVolumeMounts:
+    - name: data
+      mountPath: /var/loki
+    - name: rules
+      mountPath: /etc/loki/rules/fake
+
+# ── Disable everything not needed for a single-binary KinD deployment ─────────
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
+gateway:
+  enabled: false
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+lokiCanary:
+  enabled: false
+test:
+  enabled: false
+monitoring:
+  selfMonitoring:
+    enabled: false
+    grafanaAgent:
+      installOperator: false
+  serviceMonitor:
+    enabled: false

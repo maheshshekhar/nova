@@ -47,11 +47,23 @@ log "Checking prerequisites..."
 command -v docker >/dev/null 2>&1 || error "Docker not found. Install Docker Desktop."
 command -v kind >/dev/null 2>&1   || error "KinD not found. Run: brew install kind"
 command -v kubectl >/dev/null 2>&1 || error "kubectl not found. Run: brew install kubectl"
+command -v helm >/dev/null 2>&1   || error "Helm not found. Run: brew install helm"
 
 # Unset platform override — KinD node runs as amd64 under Rosetta on M1
 unset DOCKER_DEFAULT_PLATFORM
 
 success "All prerequisites found"
+
+# ── Helm repos (Loki, Grafana, Prometheus stack, Fluent Bit) ──────────────────
+# The observability stack is deployed via Helm using the pinned values files at
+# the repo root (loki-values.yaml, grafana-values.yaml, prometheus-values.yaml,
+# fluent-bit-values.yaml). Adding a repo that already exists is a no-op.
+log "Ensuring Helm repos are configured..."
+helm repo add grafana https://grafana.github.io/helm-charts >/dev/null 2>&1 || true
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
+helm repo add fluent https://fluent.github.io/helm-charts >/dev/null 2>&1 || true
+helm repo update >/dev/null 2>&1 || warn "helm repo update failed — using cached indexes"
+success "Helm repos ready"
 
 # ── Create KinD cluster ───────────────────────────────────────────────────────
 log "Creating KinD cluster: ${CLUSTER_NAME}..."
@@ -313,15 +325,61 @@ log "Deploying infra + observability services to cluster..."
 
 kubectl apply -f examples/kind-demo/k8s/postgres.yaml
 kubectl apply -f examples/kind-demo/k8s/metrics-collector.yaml
-# Observability / log pipeline — Loki (store + ruler), Fluent Bit (shipper),
-# Alertmanager (log-driven alert routing) and Grafana (log-viewing UI). These
-# live in nova-monitoring, decoupled from the production workloads, so deleting
-# and redeploying the production namespace never disturbs them.
-kubectl apply -f examples/kind-demo/k8s/loki.yaml
+# Loki ruler rules (log-driven detection). Applied as a raw ConfigMap and mounted
+# into the Helm-deployed Loki at /etc/loki/rules/fake (see loki-values.yaml).
 kubectl apply -f examples/kind-demo/k8s/loki-rules.yaml
-kubectl apply -f examples/kind-demo/k8s/fluent-bit.yaml
-kubectl apply -f examples/kind-demo/k8s/alertmanager.yaml
-kubectl apply -f examples/kind-demo/k8s/grafana.yaml
+
+# ── Observability stack via Helm ──────────────────────────────────────────────
+# Loki (store + ruler), Fluent Bit (shipper), the kube-prometheus-stack
+# (Prometheus + Alertmanager) and Grafana. Values live at the repo root and pin
+# the release/full names so the Service DNS (loki:3100, grafana:3000,
+# alertmanager:9093) stays identical to what the dashboard expects. Idempotent:
+# `helm upgrade --install` re-applies cleanly on re-runs.
+log "Deploying Loki (grafana/loki) via Helm..."
+helm upgrade --install loki grafana/loki \
+  --version 7.1.0 --namespace "${MON_NAMESPACE}" \
+  -f examples/kind-demo/k8s/loki-values.yaml --wait --timeout 5m \
+  || error "Loki Helm install failed"
+
+log "Deploying Fluent Bit (fluent/fluent-bit) via Helm..."
+helm upgrade --install fluent-bit fluent/fluent-bit \
+  --version 0.57.9 --namespace "${MON_NAMESPACE}" \
+  -f examples/kind-demo/k8s/fluent-bit-values.yaml --wait --timeout 3m \
+  || error "Fluent Bit Helm install failed"
+
+log "Deploying kube-prometheus-stack (Prometheus + Alertmanager) via Helm..."
+helm upgrade --install my-prometheus prometheus-community/kube-prometheus-stack \
+  --version 87.19.0 --namespace "${MON_NAMESPACE}" \
+  -f examples/kind-demo/k8s/prometheus-values.yaml --wait --timeout 8m \
+  || error "kube-prometheus-stack Helm install failed"
+
+log "Deploying Grafana (grafana/grafana) via Helm..."
+helm upgrade --install grafana grafana/grafana \
+  --version 10.5.15 --namespace "${MON_NAMESPACE}" \
+  -f examples/kind-demo/k8s/grafana-values.yaml --wait --timeout 3m \
+  || error "Grafana Helm install failed"
+
+# `helm --wait` on kube-prometheus-stack returns once the Operator is ready, but
+# the Prometheus and Alertmanager pods are created afterwards by the Operator
+# (from the CRDs), so wait for those StatefulSets explicitly before wiring up the
+# Alertmanager alias. The StatefulSet may not exist the instant helm returns, so
+# poll for it first (kubectl 1.29 has no --for=create).
+log "Waiting for Operator-managed Alertmanager + Prometheus..."
+for sts in \
+  alertmanager-my-prometheus-kube-prometh-alertmanager \
+  prometheus-my-prometheus-kube-prometh-prometheus; do
+  for i in $(seq 1 30); do
+    kubectl get statefulset "${sts}" -n "${MON_NAMESPACE}" >/dev/null 2>&1 && break
+    sleep 2
+  done
+  kubectl rollout status statefulset/"${sts}" -n "${MON_NAMESPACE}" --timeout=180s \
+    || warn "${sts} not fully ready yet"
+done
+
+# Alias Service so the Loki ruler's `alertmanager:9093` and the port-forward both
+# resolve to the kube-prometheus-stack Alertmanager pod.
+kubectl apply -f examples/kind-demo/k8s/alertmanager-alias.yaml
+
 kubectl apply -f examples/kind-demo/k8s/dashboard-rbac.yaml
 kubectl apply -f examples/kind-demo/k8s/dashboard.yaml
 
@@ -340,23 +398,9 @@ kubectl wait --for=condition=available \
   -n "${MON_NAMESPACE}" \
   --timeout=120s
 
-log "Waiting for Loki to be ready..."
-kubectl wait --for=condition=available \
-  deployment/loki \
-  -n "${MON_NAMESPACE}" \
-  --timeout=180s
-
-log "Waiting for Alertmanager and Grafana to be ready..."
-kubectl wait --for=condition=available \
-  deployment/alertmanager \
-  deployment/grafana \
-  -n "${MON_NAMESPACE}" \
-  --timeout=120s
-
-log "Waiting for Fluent Bit DaemonSet to roll out..."
-kubectl rollout status daemonset/fluent-bit \
-  -n "${MON_NAMESPACE}" \
-  --timeout=120s || warn "Fluent Bit not fully ready yet — logs may lag briefly"
+# Loki, Fluent Bit, Prometheus/Alertmanager and Grafana readiness is already
+# gated by the `helm upgrade --install --wait` calls above, so no explicit
+# kubectl wait is needed for them here.
 
 log "Waiting for dashboard to be ready..."
 kubectl wait --for=condition=available \
