@@ -1,0 +1,88 @@
+# ── kube-prometheus-stack (pinned 87.19.0) ────────────────────────────────────
+# Install with release name `my-prometheus` (services become
+# my-prometheus-kube-prometheus-{prometheus,alertmanager}). Used only for:
+#   • Prometheus — additive metrics source (the app still reads metrics-collector).
+#   • Alertmanager — receives Loki-ruler alerts and webhooks Nova's /api/alerts.
+# Grafana is disabled (Nova runs its own). The stack's default Kubernetes alert
+# rules are disabled so KinD control-plane false-positives never webhook spurious
+# incidents into Nova; only alerts carrying a `service` label (from the Loki ruler)
+# are routed to the nova receiver.
+grafana:
+  enabled: false
+
+defaultRules:
+  create: false
+
+# Trim the footprint for a KinD demo — drop the control-plane/node scrapers that
+# are noisy or unavailable under KinD.
+nodeExporter:
+  enabled: false
+kubeStateMetrics:
+  enabled: false
+kubeApiServer:
+  enabled: false
+kubelet:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+coreDns:
+  enabled: false
+kubeDns:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+prometheus:
+  prometheusSpec:
+    retention: 6h
+    scrapeInterval: 30s
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests:
+        cpu: 100m
+        memory: 400Mi
+      limits:
+        memory: 800Mi
+
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: "null"
+      group_by: ["service"]
+      routes:
+        - receiver: nova
+          matchers:
+            - 'service=~".+"'
+          group_wait: 0s
+          group_interval: 1m
+          repeat_interval: 1h
+    receivers:
+      - name: "null"
+      - name: nova
+        webhook_configs:
+          - url: http://dashboard:3000/api/alerts
+            send_resolved: false

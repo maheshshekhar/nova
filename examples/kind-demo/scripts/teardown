@@ -25,6 +25,16 @@ if command -v caddy >/dev/null 2>&1; then
 fi
 sudo pkill -f "caddy run" 2>/dev/null || true
 
+# Optional: uninstall the observability Helm releases before deleting the cluster.
+# Normally unnecessary — `kind delete cluster` removes everything — but useful when
+# the same charts were installed into a non-KinD cluster. Enable with HELM_UNINSTALL=1.
+if [ "${HELM_UNINSTALL}" = "1" ] && command -v helm >/dev/null 2>&1; then
+  echo -e "${CYAN}HELM_UNINSTALL=1 — uninstalling observability Helm releases...${NC}"
+  for rel in grafana my-prometheus fluent-bit loki; do
+    helm uninstall "${rel}" -n nova-monitoring 2>/dev/null || true
+  done
+fi
+
 kind delete cluster --name nova-platform
 
 # Remove all Docker images (and the build cache) EXCEPT the KinD node image, so the

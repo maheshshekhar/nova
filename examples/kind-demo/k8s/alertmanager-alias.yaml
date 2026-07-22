@@ -1,0 +1,23 @@
+# ── Alertmanager alias Service ────────────────────────────────────────────────
+# The kube-prometheus-stack Alertmanager Service is named
+# `my-prometheus-kube-prometheus-alertmanager`, but the Loki ruler config and the
+# cluster port-forward both expect a Service named exactly `alertmanager:9093`.
+# This is a real (selector-backed) ClusterIP Service — not an ExternalName — so it
+# has endpoints and therefore works with `kubectl port-forward` as well as in-DNS
+# ruler delivery. The selector targets the Alertmanager pod the Prometheus
+# Operator creates (label `alertmanager: my-prometheus-kube-prometh-alertmanager`;
+# note the stack truncates the release name to `kube-prometh`).
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: nova-monitoring
+  labels:
+    app: alertmanager
+spec:
+  selector:
+    alertmanager: my-prometheus-kube-prometh-alertmanager
+  ports:
+    - name: http
+      port: 9093
+      targetPort: 9093

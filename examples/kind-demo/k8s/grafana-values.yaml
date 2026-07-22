@@ -1,0 +1,54 @@
+# ── Grafana (grafana/grafana chart, pinned 10.5.15) ───────────────────────────
+# Read-only deep-dive UI over the same Loki store the dashboard queries.
+# fullnameOverride + service.port: 3000 keep the Service exactly `grafana:3000`,
+# matching the cluster port-forward (localhost:3001 → grafana:3000) and Caddy's
+# https://grafana. Anonymous-admin / embedding / root-url are ported from the old
+# raw grafana.yaml so it opens straight into Explore.
+fullnameOverride: grafana
+
+adminUser: admin
+adminPassword: grafana
+
+service:
+  type: ClusterIP
+  port: 3000
+
+persistence:
+  enabled: false
+
+testFramework:
+  enabled: false
+
+grafana.ini:
+  auth.anonymous:
+    enabled: true
+    org_role: Admin
+  auth:
+    disable_login_form: true
+  auth.basic:
+    enabled: false
+  security:
+    allow_embedding: true
+  server:
+    root_url: https://grafana/
+  users:
+    default_theme: dark
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        type: loki
+        access: proxy
+        url: http://loki:3100
+        isDefault: true
+        editable: false
+        jsonData:
+          maxLines: 1000
+
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://my-prometheus-kube-prometh-prometheus:9090
+        isDefault: false

@@ -1,0 +1,68 @@
+# ── Fluent Bit (fluent/fluent-bit chart, pinned 0.57.9) ───────────────────────
+# Node-level DaemonSet that tails every container's stdout/stderr, enriches it
+# with Kubernetes metadata, keeps the production / db-postgres / nova-monitoring
+# namespaces, and pushes lines to Loki with labels {job, namespace, app, pod}.
+# The label contract is what the Loki ruler rules and the Nova log adapter rely
+# on, so it is reproduced exactly from the old raw fluent-bit.yaml.
+fullnameOverride: fluent-bit
+
+# Run on every node, including the tainted control-plane node in KinD.
+tolerations:
+  - operator: Exists
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
+config:
+  # Keep the chart's default [SERVICE] block (it wires the parsers files + health
+  # endpoint); only the inputs/filters/outputs/parsers are Nova-specific.
+  inputs: |
+    [INPUT]
+        Name             tail
+        Tag              kube.*
+        Path             /var/log/containers/*.log
+        Parser           cri
+        DB               /var/log/flb_kube.db
+        Mem_Buf_Limit    10MB
+        Skip_Long_Lines  On
+        Refresh_Interval 5
+
+  filters: |
+    [FILTER]
+        Name             kubernetes
+        Match            kube.*
+        Kube_Tag_Prefix  kube.var.log.containers.
+        Merge_Log        Off
+        Keep_Log         On
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude On
+
+    # Keep application workloads (production), the database (db-postgres) and the
+    # observability stack (nova-monitoring) namespaces.
+    [FILTER]
+        Name             grep
+        Match            kube.*
+        Regex            $kubernetes['namespace_name'] ^(production|db-postgres|nova-monitoring)$
+
+  outputs: |
+    [OUTPUT]
+        Name             loki
+        Match            kube.*
+        Host             loki
+        Port             3100
+        Labels           job=fluent-bit, namespace=$kubernetes['namespace_name'], app=$kubernetes['labels']['app'], pod=$kubernetes['pod_name']
+        Remove_Keys      kubernetes,stream,logtag,_p
+        Line_Format      json
+        Auto_Kubernetes_Labels off
+
+  customParsers: |
+    [PARSER]
+        Name         cri
+        Format       regex
+        Regex        ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<message>.*)$
+        Time_Key     time
+        Time_Format  %Y-%m-%dT%H:%M:%S.%L%z
