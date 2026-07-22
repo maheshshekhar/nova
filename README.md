@@ -16,7 +16,8 @@ Everything is pluggable and config‑driven:
 
 Run it three ways: **locally** (`npm run dev`), in **production** (Docker image / Helm
 chart / Kubernetes), or via the included **one‑command KinD demo** under
-[`examples/kind-demo/`](examples/kind-demo).
+[`examples/kind-demo/`](examples/kind-demo) — see its
+[README](examples/kind-demo/README.md).
 
 ---
 
@@ -29,12 +30,12 @@ chart / Kubernetes), or via the included **one‑command KinD demo** under
   - [Docker](#option-1--docker)
   - [Helm / Kubernetes](#option-2--helm--kubernetes)
 - [Architecture](#architecture)
-- [The included demo (KinD)](#the-included-demo-kind)
 - [Adapters & extensibility](#adapters--extensibility)
-- [Testing](#testing)
 - [Environment variables](#environment-variables)
+- [Testing](#testing)
+- [Development](#development)
 - [Repository layout](#repository-layout)
-- [Troubleshooting](#troubleshooting)
+- [The included demo (KinD)](#the-included-demo-kind)
 - [Security](#security-notes)
 
 ---
@@ -105,11 +106,15 @@ npm install
 # Optional: start from the example config (defaults work without it)
 cp nova.config.example.yaml nova.config.yaml
 
-# Optional: an AI key enables RCA/chat (without one, those features report "no key")
-export OPENROUTER_API_KEY=sk-...      # or ANTHROPIC_API_KEY
+# Optional: an AI key enables RCA/chat (without one, those features report "no key").
+# Copy the env template and fill in what you need — Next.js auto-loads .env.local.
+cp .env.local.example .env.local       # then edit .env.local (OPENROUTER_API_KEY, …)
 
 npm run dev                            # http://localhost:3000  → /overview
 ```
+
+> Prefer not to use a file? Just `export OPENROUTER_API_KEY=sk-...` (or `ANTHROPIC_API_KEY`)
+> in your shell instead — see [Environment variables](#environment-variables) for the full list.
 
 What works without extra setup:
 
@@ -273,206 +278,28 @@ flowchart TB
 
 ---
 
-## The included demo (KinD)
+## Adapters & extensibility
 
-The full local demo (a real `payment-service`, Postgres, Loki, Grafana, a load generator, and
-the incident cascade) lives entirely under [`examples/kind-demo/`](examples/kind-demo) and is
-driven by the scripts in [`examples/kind-demo/scripts/`](examples/kind-demo/scripts). It is a
-**backing environment** for Nova — not part of the core product (the boundary test enforces
-that the app never imports it).
+Every plug point is an interface resolved from config through an `AdapterRegistry`, so
+adding a backend is "implement + register", never a core change:
 
-```mermaid
-flowchart TB
-    UI["🖥️ Browser — Next.js dashboard<br/>/overview · /incidents · /logs"]
+| Plug point | Interface | Built‑in adapters | Add one |
+|---|---|---|---|
+| Logs | `LogSource` (`lib/logs/source.ts`) | Loki, Elasticsearch, OpenSearch | implement `queryLogs`, register in `lib/logs/registry.ts` |
+| Persistence | `PersistenceStore` (`lib/persistence/store.ts`) | File | pass the shared contract kit `lib/persistence/contract.ts`, register in `lib/persistence/resolve.ts` |
+| Domain | Domain Pack (`domains/*.yaml`) | payments, generic‑k8s, streaming | add a YAML file, point `domain:` at it |
+| Prompts | Templates (`prompts/*.md`) | triage/rca/chat/judge | edit the file or point `prompts:` at your own |
+| Actions | `ActionExecutor` (`lib/actions/executor.ts`) | manual, http‑webhook | register an executor (shell/k8s are opt‑in) |
 
-    subgraph api["Next.js API routes"]
-        direction LR
-        ANALYZE["/api/analyze<br/>streams RCA"]
-        METRICS["/api/metrics<br/>proxy → collector"]
-        INJECT["/api/inject<br/>create k6 load Job"]
-    end
-
-    CLAUDE["☁️ AI provider<br/>OpenRouter / Anthropic"]
-
-    subgraph cluster["KinD cluster · ns: production + nova-monitoring"]
-        PSVC["payment-service<br/>(3 pods)"]
-        PG[("postgres<br/>max_connections = 5")]
-        MC["metrics-collector"]
-        LG["load-generator<br/>(k6 Job)"]
-        LOKI["loki + fluent-bit"]
-        DASH["dashboard<br/>(containerised)"]
-    end
-
-    UI -->|analyze| ANALYZE
-    UI -->|metrics| METRICS
-    UI -->|inject| INJECT
-
-    ANALYZE --> CLAUDE
-    ANALYZE -->|LogQL| LOKI
-    METRICS -->|reads JSON| MC
-    INJECT -->|K8s API| LG
-
-    LG -->|hammers /api/checkout| PSVC
-    PSVC -->|connection pool| PG
-    PSVC -->|logs| LOKI
-    MC -->|pod metrics| PSVC
-```
-
-In the demo, the `LogSource` adapter is **Loki**: `fluent-bit` ships `payment-service` pod
-logs into Loki, and Nova pulls the incident window back via LogQL for RCA and the `/api/logs`
-viewer. `metrics-collector` aggregates pod health for the service table, and a k6
-`load-generator` drives the connection‑pool cascade that opens `INC-2847`.
-
----
-
-
-## Repository layout
-
-**🖥️ Dashboard — Next.js app**
-
-| Path | Description |
-|------|-------------|
-| `app/page.tsx` | Redirects `/` → `/overview` |
-| `app/overview/` | Main dashboard — stats, charts, service health, AI panel |
-| `app/incidents/` | Incident list + `/incidents/[id]` detail page |
-| `app/logs/` | Live log viewer |
-| `app/api/analyze/` | `POST` — streams Claude RCA (OpenRouter / Anthropic) |
-| `app/api/metrics/` | `GET` — proxies the metrics-collector |
-| `app/api/inject/` | `POST` / `DELETE` — create / stop the k6 load Job |
-| `components/dashboard/` | Dashboard UI — charts, tables, incident trigger, AI panel |
-| `components/ui/` | shadcn/ui primitives _(left untouched by convention)_ |
-| `hooks/` | `use-ai-analysis`, `use-real-metrics` |
-| `lib/` | Core logic — `config/` (schema + loader + registry), `logs/` (LogSource adapters + scope), `persistence/` (store + contract), `domain/` (Domain Packs), `ai/` (prompts + context engine), `actions/` (runbook executor), `eval/`, `security/` |
-
-**⚙️ Configuration & packs**
-
-| Path | Description |
-|------|-------------|
-| `nova.config.example.yaml` | Documented example config (copy to `nova.config.yaml`) |
-| `domains/` | Domain Packs — payments, generic‑k8s, streaming (+ authored runbooks) |
-| `prompts/` | Editable prompt templates — `triage.md`, `rca.md`, `chat-system.md`, `judge.md` |
-
-**⚙️ Cluster services** _(demo only — relocated under `examples/kind-demo/`)_
-
-| Path | Description |
-|------|-------------|
-| `examples/kind-demo/metrics-collector/` | Standalone Node/TS service — reads pod metrics |
-| `examples/kind-demo/payment-service/` | Node/Express service that crashes under DB connection load |
-| `examples/kind-demo/load-generator/` | k6 load test (Docker image) |
-
-**📦 Infra & ops**
-
-| Path | Description |
-|------|-------------|
-| `deploy/helm/nova/` | Production Helm chart (Deployment, ConfigMap, Secret, PVC, Ingress) |
-| `Dockerfile` | Nova server image — Next.js standalone (bakes in `prompts/` + `domains/`) |
-| `next.config.mjs` | `output: "standalone"` + file tracing for prompts/domains |
-| `k8s/` | Demo Kubernetes manifests (under `examples/kind-demo/`) |
-| `scripts/` | Demo orchestration under `examples/kind-demo/scripts/` — `cluster` · `inject-failure` · `recover` · `teardown` |
-
----
-
-### Demo prerequisites
-
-Beyond **Node.js 20+ / npm**, the KinD demo needs:
-
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (running)
-- [KinD](https://kind.sigs.k8s.io/) — `brew install kind`
-- [kubectl](https://kubernetes.io/docs/tasks/tools/) — `brew install kubectl`
-
-**Optional — trusted `https://nova`:** [mkcert](https://github.com/FiloSottile/mkcert) +
-[Caddy](https://caddyserver.com/) (`brew install mkcert caddy`) plus a hosts entry
-`sudo sh -c 'echo "127.0.0.1    nova" >> /etc/hosts'`. Without them the demo is still served
-at `http://localhost:3000`. Built and tested on **Apple Silicon macOS**.
-
-### Run the demo
-
-### 1. (Optional) configure AI keys for the in‑cluster dashboard
-
-```bash
-cp examples/kind-demo/k8s/secret.yaml.template examples/kind-demo/k8s/secret.yaml
-# edit examples/kind-demo/k8s/secret.yaml and fill in OPENROUTER_API_KEY and/or ANTHROPIC_API_KEY
-```
-
-`examples/kind-demo/k8s/secret.yaml` is git‑ignored. If you skip this, setup creates an empty secret and the AI
-panel simply reports that no key is configured.
-
-### 2. Create everything with one command
-
-```bash
-./examples/kind-demo/scripts/cluster
-```
-
-This is idempotent and will:
-
-1. Check prerequisites (docker, kind, kubectl).
-2. Create the `nova-platform` KinD cluster (maps container `:30000` → host `:3000`).
-3. Install and patch **metrics-server** for KinD.
-4. Create the `production` + `nova-monitoring` namespaces and the `ai-keys` secret.
-5. Build the four images (dashboard, payment-service, metrics-collector, load-generator),
-   **skipping any whose source hasn't changed** (stamps in `.build-cache/`).
-6. `kind load` each image into the cluster (only when rebuilt or missing).
-7. Apply all manifests and wait for every deployment to become available.
-9. Run `verify`.
-9. **Start the dashboard port-forward** on `localhost:3000` in the background — no manual step.
-10. If `mkcert` + `caddy` are installed, install the local CA, generate a cert for `nova`
-    (only if missing — reused across teardowns), and start **Caddy** to serve
-    **https://nova**. Binding port 443 prompts for `sudo`.
-
-### 3. Open the dashboard
-
-`cluster` already started the port-forward (and Caddy, if installed), so just open:
-
-- **https://nova/overview** — if mkcert + Caddy are installed
-- **http://localhost:3000/overview** — always available
-
-> Need to (re)start the port-forward manually? `./examples/kind-demo/scripts/port-forward` still works.
-
-### 4. Trigger an incident
-
-```bash
-./examples/kind-demo/scripts/inject-failure    # start the k6 load → payment-service degrades in ~20–30s
-# …watch the dashboard go red, open INC-2847, click "Analyze with AI", work the checklist…
-./examples/kind-demo/scripts/recover           # stop load + scale payment-service 3 → 6 → dashboard goes green
-```
-
-### 5. Tear down
-
-```bash
-./examples/kind-demo/scripts/teardown          # deletes the KinD cluster entirely
-```
-
-> **Your `https://nova` cert survives teardown.** `teardown` only deletes the KinD cluster
-> — it never touches `certs/`, the mkcert CA, or `/etc/hosts`. On the next `cluster`,
-> the existing cert is reused (mkcert is a local, offline CA — no rate limits), so you can tear
-> down and rebuild as often as you like. The background port-forward and Caddy keep running
-> after teardown; stop them with the cleanup commands below.
-
-### Stopping & cleaning up Caddy / mkcert
-
-The port-forward and Caddy run in the background and are **not** stopped by `teardown`.
-Stop them (and optionally remove the local HTTPS setup) with:
-
-```bash
-sudo caddy stop                              # stop the Caddy reverse proxy
-pkill -f "port-forward service/dashboard"    # stop the background port-forward
-
-# Optional — fully remove the local HTTPS trust + certs (only if you won't reuse them):
-mkcert -uninstall                            # remove mkcert's local CA from the trust store
-rm -rf certs/                                # delete the generated cert + key
-# brew uninstall caddy mkcert                # remove the tools entirely
-# sudo sed -i '' '/[[:space:]]nova$/d' /etc/hosts   # remove the 127.0.0.1 nova entry
-```
-
-> Keep `certs/` and skip `mkcert -uninstall` if you plan to run the stack again — that's what
-> lets the same trusted cert be reused across setups.
+A new adapter is not "done" until its **contract test suite** is green — that's how
+plug‑and‑play is enforced.
 
 ---
 
 ## Environment variables
 
-Set these in `.env.local` (local dev) or via the `ai-keys` secret / deployment env
-(in‑cluster). All AI keys are **server‑side only** — never exposed to the browser.
+Set these in `.env.local` (local dev) or via the deployment env (in‑cluster). All AI keys are
+**server‑side only** — never exposed to the browser.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -489,107 +316,6 @@ Set these in `.env.local` (local dev) or via the `ai-keys` secret / deployment e
 Secrets are referenced from config via `${ENV_VAR}` and are **server-side only** — never sent
 to the browser and never shown in `/settings`. If **neither** AI key is set, AI actions
 return a helpful message and the rest of the platform keeps working.
-
----
-
-## The incident flow
-
-```mermaid
-stateDiagram-v2
-    [*] --> HEALTHY
-    HEALTHY --> DEGRADING: click "Simulate Incident"
-    DEGRADING --> INCIDENT: after 60s · pool exhausted
-    INCIDENT --> ANALYZING: click "Analyze with AI"
-    ANALYZING --> RECOVERING: Claude streams root-cause analysis
-    RECOVERING --> STABILIZED: engineer completes recovery checklist
-    STABILIZED --> HEALTHY: auto-reset
-    HEALTHY --> [*]
-```
-
-- **Browser‑driven (no cluster):** the `Simulate Incident` button runs a 90s state machine
-  (`lib/live-state.tsx`) — DEGRADING at click, INCIDENT at 60s.
-- **Cluster‑driven:** the same button also calls `POST /api/inject`, which launches the k6
-  load Job so the *real* `payment-service` fails. `recover` (or the checklist narrative)
-  restores it.
-
----
-
-## Scripts reference
-
-All scripts live in `examples/kind-demo/scripts/` and are executable. They use `set -e` and are safe to re‑run.
-
-| Script | What it does |
-|--------|--------------|
-| `cluster` | Creates the cluster, builds/loads images, deploys, verifies, starts the background port-forward, and (if mkcert + caddy are installed) serves `https://nova` via Caddy. |
-| `verify` | Health‑checks the cluster (namespace, deployments, secret, metrics‑server). |
-| `inject-failure` | Builds/loads the k6 image, runs it as a Job, streams payment‑service logs. |
-| `recover` | Stops the load Job, scales `payment-service` 3 → 6, confirms recovery. |
-| `port-forward` | Waits for the dashboard pod, then `kubectl port-forward` to `localhost:3000`. Optional — `cluster` already starts one; use this to restart it manually. |
-| `teardown` | Deletes the `nova-platform` KinD cluster. Leaves the port-forward, Caddy, and `certs/` untouched. |
-
-> **Force a rebuild:** the build step caches on source mtime via `.build-cache/*.stamp`.
-> To force an image rebuild after a change the cache doesn't catch, delete its stamp
-> (e.g. `rm .build-cache/dashboard.stamp`) or the image (`docker rmi nova/dashboard:latest`).
-
----
-
-## Services & API routes
-
-### Next.js API routes
-| Route | Method | Purpose |
-|-------|--------|---------|
-| `/api/analyze` | `POST` | Streams Claude's RCA. Body: `{ logs: string[], context: string }`. Picks OpenRouter if its key is set, else Anthropic. |
-| `/api/metrics` | `GET` | Proxies the metrics‑collector. `?endpoint=metrics/services`. Returns `{ fallback: true }` (503) when unreachable. |
-| `/api/logs` | `GET` | Queries Loki (LogQL) for service logs. `?service=&since=&until=&levels=&limit=`. Returns `{ fallback: true }` (503) when Loki is unreachable. |
-| `/api/alerts` | `POST` | Alertmanager webhook — opens a live incident from a Loki-ruler ERROR-spike alert (idempotent per service). |
-| `/api/inject` | `POST` / `DELETE` | Creates / deletes the `load-generator` k6 Job in the `production` namespace (needs the `dashboard-sa` RBAC). Fails silently if K8s is unavailable. |
-
-### metrics-collector (`:3001`, standalone Node/TS service)
-| Endpoint | Purpose |
-|----------|---------|
-| `/metrics` | Full cluster state. |
-| `/metrics/services` | Per‑service aggregated pod metrics. |
-| `/health` | Liveness/readiness. |
-
-### payment-service (`:8080`, in‑cluster)
-`POST /api/checkout`, `GET /health`, `GET /metrics`, `GET /circuit-breaker`. The `/health`
-endpoint returns 503 once `errorRate > 50%`, which trips the liveness probe.
-
----
-
-## Live vs. simulated data
-
-The dashboard is designed to be **identical with or without a cluster**:
-
-- **Service health table** shows `LIVE` (green) when `metrics-collector` is reachable and
-  overrides matching rows with real pod CPU/memory/error‑rate/status/pod‑count; otherwise it
-  shows `SIMULATED`.
-- **Logs page** streams real cluster logs from Loki (`LIVE — cluster logs`); before the
-  first poll lands, or when Loki is unreachable, it shows `OFFLINE`. There is no static
-  fallback stream.
-- **Incident `INC-2847`** uses real cluster logs for its Related Logs panel and for the
-  Claude analysis when available (a green `LIVE` / `LIVE LOGS` badge appears); otherwise it
-  uses the static incident logs. `INC-2846` / `INC-2845` always use static logs.
-
-All cluster reads go through one poller each (3s interval) and degrade gracefully on error.
-
----
-
-## Adapters & extensibility
-
-Every plug point is an interface resolved from config through an `AdapterRegistry`, so
-adding a backend is "implement + register", never a core change:
-
-| Plug point | Interface | Built‑in adapters | Add one |
-|---|---|---|---|
-| Logs | `LogSource` (`lib/logs/source.ts`) | Loki, Elasticsearch, OpenSearch | implement `queryLogs`, register in `lib/logs/registry.ts` |
-| Persistence | `PersistenceStore` (`lib/persistence/store.ts`) | File | pass the shared contract kit `lib/persistence/contract.ts`, register in `lib/persistence/resolve.ts` |
-| Domain | Domain Pack (`domains/*.yaml`) | payments, generic‑k8s, streaming | add a YAML file, point `domain:` at it |
-| Prompts | Templates (`prompts/*.md`) | triage/rca/chat/judge | edit the file or point `prompts:` at your own |
-| Actions | `ActionExecutor` (`lib/actions/executor.ts`) | manual, http‑webhook | register an executor (shell/k8s are opt‑in) |
-
-A new adapter is not "done" until its **contract test suite** is green — that's how
-plug‑and‑play is enforced.
 
 ---
 
@@ -615,9 +341,6 @@ npm run dev            # dashboard at http://localhost:3000
 npm run build          # production build (Next.js standalone output)
 npm run typecheck      # type-check the Next.js app
 npm test               # run the test suite
-
-# The demo micro-services are separate projects under examples/kind-demo/
-cd examples/kind-demo/metrics-collector && npm install && npm run dev
 ```
 
 - **Tooling:** Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS · shadcn/ui ·
@@ -627,22 +350,67 @@ cd examples/kind-demo/metrics-collector && npm install && npm run dev
   never imports them.
 - `components/ui/` holds generated shadcn primitives and is left untouched by convention.
 
+---
+
+## Repository layout
+
+**🖥️ Dashboard — Next.js app**
+
+| Path | Description |
+|------|-------------|
+| `app/page.tsx` | Redirects `/` → `/overview` |
+| `app/overview/` | Main dashboard — stats, charts, service health, AI panel |
+| `app/incidents/` | Incident list + `/incidents/[id]` detail page |
+| `app/logs/` | Live log viewer |
+| `app/api/analyze/` | `POST` — streams the RCA (OpenRouter / Anthropic) |
+| `app/api/metrics/` | `GET` — proxies the metrics-collector |
+| `app/api/inject/` | `POST` / `DELETE` — create / stop the k6 load Job |
+| `components/dashboard/` | Dashboard UI — charts, tables, incident trigger, AI panel |
+| `components/ui/` | shadcn/ui primitives _(left untouched by convention)_ |
+| `hooks/` | `use-ai-analysis`, `use-real-metrics` |
+| `lib/` | Core logic — `config/` (schema + loader + registry), `logs/` (LogSource adapters + scope), `persistence/` (store + contract), `domain/` (Domain Packs), `ai/` (prompts + context engine), `actions/` (runbook executor), `eval/`, `security/` |
+
+**⚙️ Configuration & packs**
+
+| Path | Description |
+|------|-------------|
+| `nova.config.example.yaml` | Documented example config (copy to `nova.config.yaml`) |
+| `domains/` | Domain Packs — payments, generic‑k8s, streaming (+ authored runbooks) |
+| `prompts/` | Editable prompt templates — `triage.md`, `rca.md`, `chat-system.md`, `judge.md` |
+
+**📦 Infra & ops**
+
+| Path | Description |
+|------|-------------|
+| `deploy/helm/nova/` | Production Helm chart (Deployment, ConfigMap, Secret, PVC, Ingress) |
+| `Dockerfile` | Nova server image — Next.js standalone (bakes in `prompts/` + `domains/`) |
+| `next.config.mjs` | `output: "standalone"` + file tracing for prompts/domains |
+
+**🧪 Demo environment** _(not part of the core)_
+
+| Path | Description |
+|------|-------------|
+| `examples/kind-demo/` | One‑command KinD demo — micro-services, Helm values and orchestration scripts. See its [README](examples/kind-demo/README.md). |
 
 ---
 
-## Troubleshooting
+## The included demo (KinD)
 
-| Symptom | Fix |
-|---------|-----|
-| `kind`/`kubectl`/`docker` not found | Install them (see [Prerequisites](#prerequisites)); ensure Docker Desktop is running. |
-| Dashboard not on `localhost:3000` | Run `./examples/kind-demo/scripts/port-forward` (the pod must be Ready first). |
-| `https://nova` not loading | Ensure `mkcert` + `caddy` are installed, `/etc/hosts` has `127.0.0.1 nova`, the port-forward is up (`http://localhost:3000` works), and Caddy is running. The `cluster` script generates the Caddyfile into `certs/` and starts Caddy for you; re‑run it or `sudo caddy start --config certs/Caddyfile`. Check `/tmp/nova-portforward.log`. |
-| Table stuck on `SIMULATED` | `metrics-collector` not reachable — check `kubectl get pods -n production` and `METRICS_COLLECTOR_URL`. The dashboard still works on simulated data. |
-| "Analyze with AI" errors | No AI key configured — set `OPENROUTER_API_KEY` (or `ANTHROPIC_API_KEY`) in `.env.local` / the `ai-keys` secret. |
-| `npm ci` fails in the Docker build | `package.json` and `package-lock.json` are out of sync — run `npm install` locally to refresh the lockfile. |
-| Image change not picked up | Delete its build stamp in `.build-cache/` or the Docker image, then re‑run `cluster`. |
-| Re‑running `inject-failure` errors | It auto‑deletes the prior `load-generator` Job; if a pod lingers, `kubectl delete job load-generator -n production --ignore-not-found`. |
-| Reset the incident | Re‑run `./examples/kind-demo/scripts/recover` (stops the load Job and scales `payment-service` back to healthy). |
+A complete, one‑command local demo — a real `payment-service`, Postgres, a full observability
+stack (Loki, Fluent Bit, Grafana, Prometheus + Alertmanager) and a k6 load generator that
+drives a connection‑pool cascade — lives entirely under
+[`examples/kind-demo/`](examples/kind-demo). It is a **backing environment** for Nova, not part
+of the core product (the boundary test enforces the app never imports it).
+
+```bash
+./examples/kind-demo/scripts/cluster        # create the cluster + deploy infra & observability
+./examples/kind-demo/scripts/deploy-app     # deploy the demo workloads
+./examples/kind-demo/scripts/inject-failure # trigger the incident
+```
+
+See **[`examples/kind-demo/README.md`](examples/kind-demo/README.md)** for the full guide —
+prerequisites, the observability (Helm) stack, scripts reference, the incident flow, and
+troubleshooting.
 
 ---
 
