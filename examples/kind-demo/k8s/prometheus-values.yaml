@@ -1,7 +1,9 @@
 # ── kube-prometheus-stack (pinned 87.19.0) ────────────────────────────────────
 # Install with release name `my-prometheus` (services become
-# my-prometheus-kube-prometheus-{prometheus,alertmanager}). Used only for:
-#   • Prometheus — additive metrics source (the app still reads metrics-collector).
+# my-prometheus-kube-prometheus-{prometheus,alertmanager}). Used for:
+#   • Prometheus — the dashboard's PRIMARY metrics source (scrapes the apps'
+#     real /metrics via the `production-apps` ServiceMonitor; Nova queries it via
+#     `metrics.provider: prometheus`). Pod counts are still merged from the collector.
 #   • Alertmanager — receives Loki-ruler alerts and webhooks Nova's /api/alerts.
 # Grafana is disabled (Nova runs its own). The stack's default Kubernetes alert
 # rules are disabled so KinD control-plane false-positives never webhook spurious

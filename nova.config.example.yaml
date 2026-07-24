@@ -50,6 +50,48 @@ persistence:
 metrics:
   provider: http                # prometheus | http | none
   url: ${METRICS_COLLECTOR_URL:-http://metrics-collector:3001}
+  # ── Prometheus provider ──────────────────────────────────────────────────
+  # Nova is a PromQL CLIENT — it queries your existing Prometheus, it never
+  # scrapes (that's your ServiceMonitor / scrape_configs). Point it at Prometheus
+  # and declare which PromQL produces which metric key (domain-agnostic — no
+  # service names baked in). Each query MUST return an instant vector labelled by
+  # `serviceLabel`. Only the keys you configure are populated.
+  # provider: prometheus
+  # url: ${PROM_URL:-http://prometheus:9090}
+  # authTokenEnv: PROM_TOKEN      # env var holding a bearer token (optional)
+  # serviceLabel: service         # PromQL label that identifies the service
+  # queries:
+  #   avgCpu:     'avg by (service)(rate(container_cpu_usage_seconds_total[5m])) * 100'
+  #   avgMemory:  'avg by (service)(container_memory_working_set_bytes / container_spec_memory_limit_bytes) * 100'
+  #   errorRate:  'sum by (service)(rate(http_requests_total{code=~"5.."}[5m])) / sum by (service)(rate(http_requests_total[5m])) * 100'
+  #   latencyP95: 'histogram_quantile(0.95, sum by (service,le)(rate(http_request_duration_seconds_bucket[5m]))) * 1000'
+  #   latencyP50: 'histogram_quantile(0.50, sum by (service,le)(rate(http_request_duration_seconds_bucket[5m]))) * 1000'
+  #   rps:        'sum by (service)(rate(http_requests_total[5m]))'
+
+# ── Dashboard presentation (optional — source-driven, config-curated) ────────
+# The dashboard only ever renders values that come from a real source; this
+# section lets you CURATE that presentation without hardcoding any service or
+# value. Omit it entirely to accept the auto behaviour: a column/tile appears
+# only when a real value exists, and the grid auto-flows.
+# dashboard:
+#   # Workload names/substrings treated as infrastructure (hidden from the
+#   # "application services" view). Domain-agnostic: empty by default.
+#   infraWorkloads: [ingress-nginx, kube-system, load-generator]
+#   serviceTable:
+#     columns: auto             # auto | explicit ordered list of metric keys
+#     # columns: [status, avgCpu, avgMemory, errorRate, readyPods]
+#   stats:
+#     tiles: auto               # auto | explicit tiles, each bound to a real metric
+#     # tiles:
+#     #   - { id: cpu,    label: Fleet CPU,    metric: avgCpu }
+#     #   - { id: errors, label: Error Rate,   metric: errorRate }
+#     #   # PromQL query tiles (executed SERVER-SIDE against metrics.url; the browser
+#     #   # only references them by id — no free-form PromQL reaches Prometheus):
+#     #   - { id: db-pool, label: DB pool, query: 'max(db_pool_in_use_percent)', unit: '%', thresholds: { warn: 70, critical: 90 } }
+#   # Per-metric threshold overrides (on top of built-in descriptor defaults):
+#   thresholds:
+#     errorRate: { warn: 1, critical: 5 }
+#     avgCpu:    { warn: 70, critical: 90 }
 
 # ── Detection & impact (generalises the checkout/503 counter) ────────────────
 detection:

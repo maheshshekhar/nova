@@ -106,13 +106,13 @@ describe("domain leak — positive controls (the test can actually detect a leak
     expect(out).toMatch(PAYMENT_VOCAB)
   })
 
-  it("the default (payments-reference) promptVars DO contain payment vocab", () => {
+  it("the default domain carries NO payment vocab (core is domain-agnostic)", () => {
     const { prompts } = getConfig()
     const triage = renderTemplateFile(prompts.triage, {
       ...DEFAULT_DOMAIN.promptVars,
       context: "CTX",
       logs: "L1",
     } as Record<string, string>)
-    expect(triage).toMatch(PAYMENT_VOCAB)
+    expect(triage).not.toMatch(PAYMENT_VOCAB)
   })
 })

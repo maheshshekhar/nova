@@ -1,16 +1,24 @@
 import { NextResponse } from "next/server"
 import * as k8s from "@kubernetes/client-node"
 
-const kc = new k8s.KubeConfig()
+export const dynamic = "force-dynamic"
 
-if (process.env.KUBERNETES_SERVICE_HOST) {
-  kc.loadFromCluster()
-} else {
-  kc.loadFromDefault()
+// Lazily build the k8s client on first request so the module has NO import-time
+// side effects — the production build / page-data collection never needs a live
+// cluster or kubeconfig.
+let batchApiSingleton: k8s.BatchV1Api | null = null
+function getBatchApi(): k8s.BatchV1Api {
+  if (!batchApiSingleton) {
+    const kc = new k8s.KubeConfig()
+    if (process.env.KUBERNETES_SERVICE_HOST) {
+      kc.loadFromCluster()
+    } else {
+      kc.loadFromDefault()
+    }
+    batchApiSingleton = kc.makeApiClient(k8s.BatchV1Api)
+  }
+  return batchApiSingleton
 }
-
-const batchApi = kc.makeApiClient(k8s.BatchV1Api)
-const coreApi = kc.makeApiClient(k8s.CoreV1Api)
 
 const NAMESPACE = "production"
 
@@ -18,7 +26,7 @@ export async function POST() {
   try {
     // Delete existing job and wait for it to be fully gone
     try {
-      await batchApi.deleteNamespacedJob(
+      await getBatchApi().deleteNamespacedJob(
         "load-generator",
         NAMESPACE,
         undefined,
@@ -33,7 +41,7 @@ export async function POST() {
       for (let i = 0; i < 15; i++) {
         await new Promise(r => setTimeout(r, 1000))
         try {
-          await batchApi.readNamespacedJob("load-generator", NAMESPACE)
+          await getBatchApi().readNamespacedJob("load-generator", NAMESPACE)
           // Still exists, keep waiting
         } catch {
           // Job is gone
@@ -76,7 +84,7 @@ export async function POST() {
       }
     }
 
-    await batchApi.createNamespacedJob(NAMESPACE, job)
+    await getBatchApi().createNamespacedJob(NAMESPACE, job)
 
     return NextResponse.json({
       success: true,
@@ -93,7 +101,7 @@ export async function POST() {
 
 export async function DELETE() {
   try {
-    await batchApi.deleteNamespacedJob(
+    await getBatchApi().deleteNamespacedJob(
       "load-generator",
       NAMESPACE,
       undefined,

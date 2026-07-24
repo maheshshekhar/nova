@@ -7,10 +7,10 @@ import { buildPrompt, buildRcaPrompt, buildSystemPrompt } from "@/lib/ai/prompts
 // that is how we prove externalization preserved the prompt contract.
 
 const LOGS = [
-  "2026-01-14T09:13:41Z ERROR pool.connect() timeout after 5000ms",
-  "2026-01-14T09:13:42Z ERROR FATAL: too many connections",
+  "2026-01-14T09:13:41Z ERROR request handler timeout after 5000ms",
+  "2026-01-14T09:13:42Z ERROR upstream connection refused",
 ]
-const CONTEXT = "INC-2847: payment-service DB connection pool exhaustion."
+const CONTEXT = "INC-1001: service-a elevated 5xx error rate."
 
 describe("buildPrompt (triage)", () => {
   const p = buildPrompt(LOGS, CONTEXT)
@@ -21,7 +21,7 @@ describe("buildPrompt (triage)", () => {
   })
 
   it("includes the provided log lines", () => {
-    expect(p).toContain("pool.connect() timeout after 5000ms")
+    expect(p).toContain("request handler timeout after 5000ms")
   })
 
   it("requests the fixed triage sections", () => {

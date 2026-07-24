@@ -36,6 +36,12 @@ spec:
               value: "http://config-service"
             - name: TRANSACTION_SERVICE_URL
               value: "http://transaction-service"
+            - name: SERVICE_NAME
+              value: "payment-service"
+            - name: MEMORY_LIMIT_MB
+              value: "128"
+            - name: CPU_LIMIT_M
+              value: "200"
           resources:
             requests:
               memory: "64Mi"
@@ -66,9 +72,13 @@ kind: Service
 metadata:
   name: payment-service
   namespace: production
+  labels:
+    app: payment-service
+    monitored: "true"
 spec:
   selector:
     app: payment-service
   ports:
-    - port: 80
+    - name: http
+      port: 80
       targetPort: 8080

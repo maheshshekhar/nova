@@ -6,7 +6,6 @@ import { formatLocalTime, formatLocalStamp, parseRawLogLine } from "@/lib/local-
 import { selectIncidentLogEntries, countCheckoutFailures } from "@/lib/log-selection"
 import { deriveIncidentMetrics } from "@/lib/incident-metrics"
 import { useAiAnalysis } from "@/hooks/use-ai-analysis"
-import { useLiveState } from "@/lib/live-state"
 import {
   Dialog,
   DialogContent,
@@ -28,16 +27,13 @@ type RcaIncident = {
 
 type RealLog = { timestamp: string; level: string; message: string; pod: string }
 
-// Accurate remediation per incident; other incidents fall back to a generic line.
 // Accurate resolution per failure type so the RCA's remediation matches the REAL
-// fix for THIS incident. Keying by the literal id "INC-2847" previously leaked the
-// payment "scale to 6 replicas" note into whatever incident happened to be INC-2847
-// (e.g. a config-service outage), which the eval judge correctly flagged.
-function resolutionFor(service: string, failureType?: string): string {
-  if (service === "payment-service") {
-    return "Resolved by stopping the load-generator Job and scaling payment-service from 3 to 6 replicas, restoring healthy Postgres connection-pool headroom."
-  }
+// fix for THIS incident. Domain-agnostic: keyed on the failure type, never on a
+// specific service name.
+function resolutionFor(_service: string, failureType?: string): string {
   switch (failureType) {
+    case "db-pool-exhaustion":
+      return "Resolved by shedding load and scaling the affected deployment to restore database connection-pool headroom."
     case "secret-missing":
       return "Resolved by restoring the missing Secret from its source of truth and rolling the deployment so pods passed config validation and became Ready."
     case "config-missing":
@@ -233,18 +229,9 @@ export function RcaGeneratorButton({
     () => rcaStore[incident.id]?.additionalDetails ?? initialRca?.additionalDetails ?? ""
   )
   const [showDetailInput, setShowDetailInput] = useState(false)
-  // Customer-impact count. Starts from the incident record, then updated to a
-  // LIVE value (real checkout 503s in the logs) when the RCA is generated.
+  // Customer-impact count. Starts from the incident record's real figure; when the
+  // RCA is generated it is re-derived from the real logs within the incident window.
   const [affectedCount, setAffectedCount] = useState(incident.affectedUsers)
-  const { incidentStartedAt, currentIncidentId, impactCount } = useLiveState()
-  // Keep the customer-impact figure dynamic: for the incident currently in progress
-  // the live count (real checkout 503s, single source of truth) supersedes the
-  // record's static seed so the RCA header reflects the ACTUAL number, not 1,842.
-  useEffect(() => {
-    if (incident.id === currentIncidentId && impactCount > 0) {
-      setAffectedCount(impactCount)
-    }
-  }, [impactCount, currentIncidentId, incident.id])
   const { state, analyze, reset } = useAiAnalysis()
   // Set when generation is withheld because there is no real log evidence to
   // ground the RCA in (we never fabricate one from static mock data).
@@ -283,13 +270,12 @@ export function RcaGeneratorButton({
     const nowMs = Date.now()
     setGeneratedAt(formatLocalStamp(new Date(nowMs)))
 
-    // Real incident window. For the active incident use the actual detected start;
-    // otherwise assume a recent window. PROVISIONAL — re-anchored to the real log
-    // timestamps below so the declared/resolved bookends never drift from the logs.
-    const isActive = incident.id === currentIncidentId
+    // Real incident window. Use the record's real onset when known; otherwise
+    // assume a recent window. PROVISIONAL — re-anchored to the real log timestamps
+    // below so the declared/resolved bookends never drift from the logs.
     let startedMs =
-      isActive && incidentStartedAt != null
-        ? incidentStartedAt
+      incidentStartedAtMs != null && Number.isFinite(incidentStartedAtMs)
+        ? incidentStartedAtMs
         : nowMs - 15 * 60 * 1000
     let resolvedMs = nowMs
 
@@ -352,18 +338,20 @@ export function RcaGeneratorButton({
     // and derive the duration + start label from it.
     const durationMin = Math.max(1, Math.round((resolvedMs - startedMs) / 60000))
     const startedText =
-      isActive && incidentStartedAt != null ? `${durationMin} min ago` : incident.started
+      incidentStartedAtMs != null && Number.isFinite(incidentStartedAtMs)
+        ? `${durationMin} min ago`
+        : incident.started
     setStartedLabel(startedText)
 
     // Customer impact via the shared derivation (single source of truth): prefer
     // the record's frozen affectedUsers, falling back to the live windowed count,
     // so the RCA figure is IDENTICAL to the overview and AI-analysis blast radius.
     const m = deriveIncidentMetrics({
-      isActive,
+      isActive: false,
       resolved: true,
       failureType: incidentFailureType as import("@/lib/incident-types").FailureType | undefined,
-      liveImpact: impactCount,
-      incidentStartedAt,
+      liveImpact: 0,
+      incidentStartedAt: incidentStartedAtMs ?? null,
       recordAffectedUsers: incident.affectedUsers,
       windowedFallback: liveAffected,
     })
@@ -398,7 +386,7 @@ export function RcaGeneratorButton({
     const genContext = parts.join("\n")
     genContextRef.current = genContext
     analyze(logs, genContext, { mode: "rca", service: incident.service, sinceMs: startedMs })
-  }, [incident, analyze, logsAvailable, realLogs, incidentStartedAt, currentIncidentId, additionalDetails, reset, incidentStartedAtMs, incidentResolvedAtMs, incidentFailureType])
+  }, [incident, analyze, logsAvailable, realLogs, additionalDetails, reset, incidentStartedAtMs, incidentResolvedAtMs, incidentFailureType])
 
   // Persist the finished document so it survives close/open and navigation.
   useEffect(() => {

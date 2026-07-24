@@ -78,7 +78,7 @@ logs:
     exclude: [{ service: load-generator }]
 persistence:
   provider: file                 # file (Mongo/Postgres/S3 are adapter-ready)
-  seed: none                     # 'none' = start empty; 'demo' = bundled sample history
+  seed: none                     # 'none' = start empty (default). No demo history ships anymore.
 ai:
   provider: openrouter           # openrouter | anthropic | openai | azure | ollama
   apiKeyEnv: OPENROUTER_API_KEY  # the ENV VAR name — the key stays in env
@@ -95,6 +95,37 @@ features:
 - **Prompt templates** live in [`prompts/`](prompts) (`triage.md`, `rca.md`, `chat-system.md`,
   `judge.md`) and are referenced under `prompts:` in the config.
 - The full surface is documented inline in `nova.config.example.yaml`.
+
+### Point Nova at your Prometheus
+
+Nova can source per‑service metrics (CPU, memory, error rate, **p95 latency, RPS**) from a real
+Prometheus. Nova is only a **PromQL client** — it queries your existing Prometheus, it never
+scrapes (your `ServiceMonitor`/`scrape_configs` own that, and your apps expose `/metrics`).
+You declare, in config, which PromQL produces which metric key — so it stays domain‑agnostic:
+
+```yaml
+metrics:
+  provider: prometheus
+  url: ${PROM_URL:-http://prometheus:9090}
+  authTokenEnv: PROM_TOKEN         # env var holding a bearer token (optional)
+  serviceLabel: service            # PromQL label that identifies the service
+  queries:
+    errorRate:  'sum by (service)(rate(http_requests_total{code=~"5.."}[5m])) / sum by (service)(rate(http_requests_total[5m])) * 100'
+    latencyP95: 'histogram_quantile(0.95, sum by (service,le)(rate(http_request_duration_seconds_bucket[5m]))) * 1000'
+    rps:        'sum by (service)(rate(http_requests_total[5m]))'
+```
+
+The service‑health table and the latency chart light up automatically when these values exist.
+You can also add **custom PromQL stat tiles** under `dashboard.stats.tiles` — each tile’s query
+is executed **server‑side** (the browser only references it by `id`, so no free‑form PromQL ever
+reaches Prometheus):
+
+```yaml
+dashboard:
+  stats:
+    tiles:
+      - { id: db-pool, label: "DB pool", query: "max(db_pool_in_use_percent)", unit: "%", thresholds: { warn: 70, critical: 90 } }
+```
 
 ---
 
@@ -134,6 +165,9 @@ Nova is a stateless Next.js server (standalone output) on port **3000**. It need
 2. **Secrets** in the environment (AI key + any backend credentials).
 3. **Persistence** — a volume for the file store at `/data` (`DATA_DIR`), or a database
    adapter once configured.
+
+A real deployment starts from a **fresh `dataDir`** (`$DATA_DIR`, default `./data`); Nova
+seeds **no demo incidents** — the incident history is empty until real incidents arrive.
 
 The `prompts/` and `domains/` folders are **baked into the image** (traced into the Next.js
 standalone output), so they ship automatically.

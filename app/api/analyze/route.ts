@@ -2,6 +2,7 @@ import { NextRequest } from "next/server"
 import { buildPrompt, buildRcaPrompt } from "@/lib/ai/prompts"
 import { fetchCollectorLogs } from "@/lib/logs/server-log-source"
 import { selectIncidentLogs, countCheckoutFailures } from "@/lib/log-selection"
+import { openRouterAttribution } from "@/lib/ai/openrouter"
 
 export async function POST(req: NextRequest) {
   const { logs, context, mode, service, sinceMs, tz, impact } = await req.json()
@@ -68,8 +69,7 @@ async function streamOpenRouter(prompt: string, apiKey: string, maxTokens = 400)
     headers: {
       "Authorization": `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      "HTTP-Referer": "http://localhost:3000",
-      "X-Title": "Nova"
+      ...openRouterAttribution()
     },
     body: JSON.stringify({
       model: process.env.OPENROUTER_MODEL || "anthropic/claude-sonnet-4-6",

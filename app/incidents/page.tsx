@@ -1,8 +1,6 @@
 "use client"
 
 import { AlertTriangle, ArrowLeft, ArrowUpRight, CheckCircle2, Clock, Filter, Search, Users, Zap } from "lucide-react"
-import { makeActiveIncident } from "@/lib/dashboard-data"
-import { useLiveState } from "@/lib/live-state"
 import { useEffect, useState } from "react"
 import Link from "next/link"
 
@@ -16,7 +14,7 @@ type ApiIncident = {
   startedAt: number
   resolvedAt: number | null
   durationMin: number | null
-  origin?: string
+  affectedUsers?: number
 }
 
 function agoLabel(ms: number): string {
@@ -63,6 +61,13 @@ const severityConfig = {
     badge: "bg-[var(--neon-yellow)]/15 text-[var(--neon-yellow)] border-[var(--neon-yellow)]/30",
     dot: "bg-[var(--neon-yellow)]",
   },
+  low: {
+    bg: "bg-[var(--neon-cyan)]/10",
+    border: "border-[var(--neon-cyan)]/30",
+    text: "text-[var(--neon-cyan)]",
+    badge: "bg-[var(--neon-cyan)]/15 text-[var(--neon-cyan)] border-[var(--neon-cyan)]/30",
+    dot: "bg-[var(--neon-cyan)]",
+  },
 } as const
 
 const statusLabel: Record<string, string> = {
@@ -71,32 +76,20 @@ const statusLabel: Record<string, string> = {
   monitoring: "MONITORING",
 }
 
-const resolvedConfig = {
-  bg: "bg-[var(--neon-green)]/5",
-  border: "border-[var(--neon-green)]/20",
-  text: "text-[var(--neon-green)]",
-  badge: "bg-[var(--neon-green)]/15 text-[var(--neon-green)] border-[var(--neon-green)]/30",
-  dot: "bg-[var(--neon-green)]",
-}
-
 export default function IncidentsPage() {
-  // Resolved state is in-memory live-state context (resets on full page load).
-  const { phase, resolvedIncidents: resolvedIds, currentIncidentId, pastIncidents, impactCount } = useLiveState()
-
-  // Full persisted archive (seeded history + any live incidents), from the store.
+  // Full persisted archive (all live incidents), from the store — polled so new
+  // incidents appear / resolve without a manual reload.
   const [apiIncidents, setApiIncidents] = useState<ApiIncident[]>([])
   useEffect(() => {
     let cancelled = false
     const load = () =>
-      fetch("/api/incidents?range=all")
+      fetch("/api/incidents?range=all", { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           if (!cancelled) setApiIncidents(d?.incidents ?? [])
         })
         .catch(() => {})
     load()
-    // Poll so live-injected incidents (config/transaction) appear/clear without a
-    // manual reload — the payment `phase` doesn't change for those.
     const interval = setInterval(load, 5000)
     return () => {
       cancelled = true
@@ -104,46 +97,21 @@ export default function IncidentsPage() {
     }
   }, [])
 
-  // A single active incident per run (the payment-service cascade) with the
-  // current incrementing id — shown while the system is degraded and unresolved.
-  // Impact uses the LIVE checkout-503 count (ramps from 0), never the static
-  // PRIMARY_INCIDENT 1,842 seed.
-  const active = { ...makeActiveIncident(currentIncidentId), affectedUsers: impactCount }
-  const showActive =
-    (phase === "incident" || phase === "degrading") && !resolvedIds.includes(currentIncidentId)
-  const activeIncidents = showActive ? [active] : []
+  // Active = anything not yet resolved. Dedupe by service (earliest canonical).
+  const openBySvc = new Map<string, ApiIncident>()
+  for (const i of apiIncidents.filter((i) => i.status !== "resolved")) {
+    const existing = openBySvc.get(i.service)
+    if (!existing || i.startedAt < existing.startedAt) openBySvc.set(i.service, i)
+  }
+  const activeIncidents = Array.from(openBySvc.values()).sort((a, b) => b.startedAt - a.startedAt)
 
-  // Recently resolved this session (green "Just now"): the current incident once
-  // resolved, plus archived past runs from Nova.
-  const sessionResolved = [
-    ...(resolvedIds.includes(currentIncidentId)
-      ? [{ id: currentIncidentId, title: active.title, service: active.service }]
-      : []),
-    ...pastIncidents.map((p) => ({ id: p.id, title: p.title, service: p.service })),
-  ]
-  const sessionIds = new Set(sessionResolved.map((r) => r.id))
+  // History = resolved incidents, most recently resolved first.
+  const historical = apiIncidents
+    .filter((i) => i.status === "resolved")
+    .sort((a, b) => (b.resolvedAt ?? b.startedAt) - (a.resolvedAt ?? a.startedAt))
 
-  // The persisted historical archive — everything resolved that isn't the live
-  // active incident or already shown as a session-resolved card above.
-  const historical = apiIncidents.filter(
-    (i) =>
-      i.status === "resolved" &&
-      !sessionIds.has(i.id) &&
-      !(showActive && i.id === currentIncidentId)
-  )
-
-  // Live incidents injected outside the payment cascade (e.g. a config-service
-  // outage from inject-config-failure) — shown as active so the operator can
-  // open them and approve the matched runbook.
-  const liveActive = apiIncidents.filter(
-    (i) => i.origin === "live" && i.status !== "resolved" && i.id !== currentIncidentId
-  )
-
-  // Header counts cover both the payment cascade and any live-injected incidents.
-  const totalActive = activeIncidents.length + liveActive.length
-  const totalCritical =
-    activeIncidents.filter((i) => i.severity === "critical").length +
-    liveActive.filter((i) => i.severity === "critical").length
+  const totalActive = activeIncidents.length
+  const totalCritical = activeIncidents.filter((i) => i.severity === "critical").length
 
   return (
     <main className="max-w-[1600px] mx-auto px-4 lg:px-6 py-6 flex flex-col gap-6">
@@ -161,8 +129,7 @@ export default function IncidentsPage() {
               Active Incidents
             </h1>
             <p className="text-xs text-muted-foreground font-mono">
-              {totalActive} active incidents —{" "}
-              {totalCritical} critical
+              {totalActive} active incidents — {totalCritical} critical
             </p>
           </div>
           <span className="w-6 h-6 rounded-full bg-[var(--neon-red)]/15 border border-[var(--neon-red)]/30 text-[var(--neon-red)] text-xs font-bold flex items-center justify-center">
@@ -183,7 +150,7 @@ export default function IncidentsPage() {
 
       {/* Active incident cards */}
       <div className="flex flex-col gap-3">
-        {activeIncidents.length === 0 && liveActive.length === 0 && (
+        {activeIncidents.length === 0 && (
           <div className="card-glass rounded-lg px-5 py-8 flex items-center justify-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-[var(--neon-green)]" />
             <span className="text-sm font-mono text-[var(--neon-green)]">
@@ -191,40 +158,10 @@ export default function IncidentsPage() {
             </span>
           </div>
         )}
-        {liveActive.map((inc) => {
-          const cfg =
-            severityConfig[inc.severity as keyof typeof severityConfig] ?? severityConfig.high
-          return (
-            <Link
-              key={inc.id}
-              href={`/incidents/${inc.id}`}
-              className={`${cfg.bg} ${cfg.border} border rounded-lg px-5 py-4 flex items-center gap-3 cursor-pointer hover:opacity-90 transition-all hover:scale-[1.005] group`}
-            >
-              <AlertTriangle className={`w-5 h-5 ${cfg.text} shrink-0`} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`text-[10px] font-mono font-bold border px-1.5 py-0.5 rounded ${cfg.badge}`}>
-                    {inc.severity.toUpperCase()}
-                  </span>
-                  <span className="text-[10px] font-mono text-muted-foreground">{inc.id}</span>
-                  <span className="text-[10px] font-mono text-muted-foreground flex items-center gap-1">
-                    <Zap className="w-2.5 h-2.5" /> {inc.service}
-                  </span>
-                </div>
-                <p className="text-sm font-medium text-foreground mt-1 truncate group-hover:text-[var(--neon-cyan)] transition-colors">
-                  {inc.title}
-                </p>
-              </div>
-              <div className="flex items-center gap-1.5 text-[10px] font-mono font-semibold text-[var(--neon-orange)] shrink-0">
-                <span className="w-1.5 h-1.5 rounded-full bg-[var(--neon-orange)] animate-pulse" />
-                RUNBOOK READY
-              </div>
-              <ArrowUpRight className="w-4 h-4 text-muted-foreground group-hover:text-[var(--neon-cyan)] transition-colors shrink-0" />
-            </Link>
-          )
-        })}
         {activeIncidents.map((inc) => {
-          const cfg = severityConfig[inc.severity as keyof typeof severityConfig]
+          const cfg =
+            severityConfig[inc.severity as keyof typeof severityConfig] ?? severityConfig.medium
+          const affected = inc.affectedUsers ?? 0
           return (
             <Link
               key={inc.id}
@@ -253,12 +190,12 @@ export default function IncidentsPage() {
                       <Zap className="w-2.5 h-2.5" /> {inc.service}
                     </span>
                     <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                      <Clock className="w-2.5 h-2.5" /> {inc.started}
+                      <Clock className="w-2.5 h-2.5" /> {agoLabel(inc.startedAt)}
                     </span>
-                    {inc.affectedUsers > 0 && (
+                    {affected > 0 && (
                       <span className="text-[10px] text-muted-foreground flex items-center gap-1">
                         <Users className="w-2.5 h-2.5" />
-                        {inc.affectedUsers.toLocaleString()} users affected
+                        {affected.toLocaleString()} affected
                       </span>
                     )}
                   </div>
@@ -267,47 +204,13 @@ export default function IncidentsPage() {
               <div className="flex items-center gap-4 shrink-0">
                 <div className={`flex items-center gap-1.5 text-[10px] font-mono font-semibold ${cfg.text}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot} animate-pulse`} />
-                  {statusLabel[inc.status]}
+                  {statusLabel[inc.status] ?? inc.status.toUpperCase()}
                 </div>
                 <ArrowUpRight className="w-4 h-4 text-muted-foreground group-hover:text-[var(--neon-cyan)] transition-colors" />
               </div>
             </Link>
           )
         })}
-      </div>
-
-      {/* Recently resolved */}
-      <div>
-        <h2 className="text-xs font-mono font-semibold text-muted-foreground tracking-widest uppercase mb-3">
-          Recently Resolved
-        </h2>
-        <div className="flex flex-col gap-2">
-          {/* Dynamic — incidents resolved during this session */}
-          {sessionResolved.map((inc) => (
-            <Link
-              key={inc.id}
-              href={`/incidents/${inc.id}`}
-              className={`${resolvedConfig.bg} ${resolvedConfig.border} border rounded-lg px-5 py-3 flex items-center gap-3 opacity-80 hover:opacity-100 transition-opacity`}
-            >
-              <div className="w-5 h-5 rounded-full bg-[var(--neon-green)]/10 border border-[var(--neon-green)]/30 flex items-center justify-center shrink-0">
-                <CheckCircle2 className="w-3 h-3 text-[var(--neon-green)]" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono text-muted-foreground">{inc.id}</span>
-                  <span className="text-[10px] font-mono text-[var(--neon-green)] border border-[var(--neon-green)]/30 bg-[var(--neon-green)]/10 px-1.5 py-0.5 rounded">
-                    RESOLVED
-                  </span>
-                </div>
-                <p className="text-sm text-muted-foreground mt-0.5 truncate">{inc.title}</p>
-              </div>
-              <div className="text-right shrink-0">
-                <p className="text-[10px] font-mono text-[var(--neon-green)]">Just now</p>
-                <p className="text-[10px] font-mono text-muted-foreground">Stabilized</p>
-              </div>
-            </Link>
-          ))}
-        </div>
       </div>
 
       {/* Historical archive — persisted incidents (survive redeploy / teardown) */}

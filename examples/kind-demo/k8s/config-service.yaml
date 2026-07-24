@@ -30,6 +30,12 @@ spec:
               value: "8080"
             - name: FEATURE_FLAGS_URL
               value: "http://config-service/flags"
+            - name: SERVICE_NAME
+              value: "config-service"
+            - name: MEMORY_LIMIT_MB
+              value: "96"
+            - name: CPU_LIMIT_M
+              value: "100"
           resources:
             requests:
               memory: "48Mi"
@@ -56,9 +62,13 @@ kind: Service
 metadata:
   name: config-service
   namespace: production
+  labels:
+    app: config-service
+    monitored: "true"
 spec:
   selector:
     app: config-service
   ports:
-    - port: 80
+    - name: http
+      port: 80
       targetPort: 8080

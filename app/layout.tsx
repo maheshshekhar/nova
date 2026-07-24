@@ -2,7 +2,6 @@ import type { Metadata } from 'next'
 import { Inter, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import { Topbar } from '@/components/dashboard/topbar'
-import { LiveStateProvider } from '@/lib/live-state'
 import { MetricsLiveProvider } from '@/lib/metrics-live'
 import { DevOpsAssistant } from '@/components/dashboard/devops-assistant'
 import { ThemeProvider } from '@/components/theme-provider'
@@ -34,12 +33,10 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
           <div className="min-h-screen bg-background grid-lines">
             <Topbar />
-            <LiveStateProvider>
-              <MetricsLiveProvider>
-                {children}
-                <DevOpsAssistant />
-              </MetricsLiveProvider>
-            </LiveStateProvider>
+            <MetricsLiveProvider>
+              {children}
+              <DevOpsAssistant />
+            </MetricsLiveProvider>
           </div>
         </ThemeProvider>
       </body>

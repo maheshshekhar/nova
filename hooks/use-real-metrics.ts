@@ -11,6 +11,12 @@ export interface RealServiceMetric {
   avgMemory: number
   status: "healthy" | "degraded" | "critical"
   errorRate: number
+  // Optional, richer signals only some sources report (e.g. Prometheus). Absent
+  // when the source can't provide them — the dashboard renders only present fields.
+  latencyP50?: number
+  latencyP95?: number
+  latencyP99?: number
+  rps?: number
 }
 
 export interface NamespaceInfo {

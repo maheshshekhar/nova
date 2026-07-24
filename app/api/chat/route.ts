@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server"
 import { buildSystemPrompt } from "@/lib/ai/prompts"
+import { openRouterAttribution } from "@/lib/ai/openrouter"
 
 type ChatMessage = { role: "user" | "assistant"; content: string }
 
@@ -86,8 +87,7 @@ async function streamOpenRouterChat(
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      "HTTP-Referer": "http://localhost:3000",
-      "X-Title": "Nova",
+      ...openRouterAttribution(),
     },
     body: JSON.stringify({
       model,

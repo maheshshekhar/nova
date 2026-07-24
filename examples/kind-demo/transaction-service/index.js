@@ -1,10 +1,70 @@
 const express = require("express")
 const { Pool } = require("pg")
 const fs = require("fs")
+const promClient = require("prom-client")
 
 const app = express()
 app.use(express.json())
 const PORT = process.env.PORT || 8080
+
+// ── Prometheus metrics (real, service-labelled) — see payment-service ─────────
+const SERVICE_NAME = process.env.SERVICE_NAME || "transaction-service"
+const MEMORY_LIMIT_MB = Number(process.env.MEMORY_LIMIT_MB || 128)
+const CPU_LIMIT_M = Number(process.env.CPU_LIMIT_M || 200)
+const registry = new promClient.Registry()
+registry.setDefaultLabels({ service: SERVICE_NAME })
+promClient.collectDefaultMetrics({ register: registry })
+
+const httpRequests = new promClient.Counter({
+  name: "http_requests_total",
+  help: "Total HTTP requests",
+  labelNames: ["method", "route", "status"],
+  registers: [registry],
+})
+const httpDuration = new promClient.Histogram({
+  name: "http_request_duration_seconds",
+  help: "HTTP request duration in seconds",
+  labelNames: ["method", "route", "status"],
+  buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+  registers: [registry],
+})
+const cpuPercentGauge = new promClient.Gauge({
+  name: "app_cpu_percent",
+  help: "Process CPU usage as a percent of the container CPU limit",
+  registers: [registry],
+})
+const memPercentGauge = new promClient.Gauge({
+  name: "app_memory_percent",
+  help: "Process RSS as a percent of the container memory limit",
+  registers: [registry],
+})
+
+let lastCpu = process.cpuUsage()
+let lastCpuAt = Date.now()
+setInterval(() => {
+  const now = Date.now()
+  const elapsedMs = now - lastCpuAt || 1
+  const cpuNow = process.cpuUsage()
+  const usedMicros = cpuNow.user - lastCpu.user + (cpuNow.system - lastCpu.system)
+  lastCpu = cpuNow
+  lastCpuAt = now
+  const usedCores = usedMicros / 1000 / elapsedMs
+  const limitCores = CPU_LIMIT_M / 1000
+  cpuPercentGauge.set(Math.min(100, Math.max(0, Math.round((usedCores / limitCores) * 100))))
+  const rssMb = process.memoryUsage().rss / (1024 * 1024)
+  memPercentGauge.set(Math.min(100, Math.round((rssMb / MEMORY_LIMIT_MB) * 100)))
+}, 5000).unref()
+
+app.use((req, res, next) => {
+  if (req.path === "/metrics" || req.path === "/health") return next()
+  const end = httpDuration.startTimer()
+  res.on("finish", () => {
+    const labels = { method: req.method, route: req.path, status: String(res.statusCode) }
+    httpRequests.inc(labels)
+    end(labels)
+  })
+  next()
+})
 
 // ── Downstream cascade (Nova demo) ────────────────────────────────────────────
 // transaction-service is payment-service's ledger dependency. For the demo its
@@ -184,9 +244,9 @@ app.get("/ready", (req, res) => {
   res.json({ status: "ready", uptime: Date.now() - startTime })
 })
 
-app.get("/metrics", (req, res) => {
-  const errorRate = requestCount > 0 ? (errorCount / requestCount) * 100 : 0
-  res.json({ requestCount, errorCount, errorRate: Math.round(errorRate * 100) / 100 })
+app.get("/metrics", async (req, res) => {
+  res.set("Content-Type", registry.contentType)
+  res.end(await registry.metrics())
 })
 
 ensureSchema()
