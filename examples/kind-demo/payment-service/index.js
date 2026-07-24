@@ -1,9 +1,74 @@
 const express = require("express")
 const { Pool } = require("pg")
+const promClient = require("prom-client")
 
 const app = express()
 app.use(express.json())
 const PORT = process.env.PORT || 8080
+
+// ── Prometheus metrics (real, service-labelled) ───────────────────────────────
+// Exposes http_requests_total + http_request_duration_seconds (for error rate,
+// RPS and p50/p95 latency) plus app_cpu_percent / app_memory_percent computed
+// against the container's limits. All carry a `service` label so Nova's
+// Prometheus adapter can `sum by (service)(...)`. Scraped at GET /metrics.
+const SERVICE_NAME = process.env.SERVICE_NAME || "payment-service"
+const MEMORY_LIMIT_MB = Number(process.env.MEMORY_LIMIT_MB || 128)
+const CPU_LIMIT_M = Number(process.env.CPU_LIMIT_M || 200)
+const registry = new promClient.Registry()
+registry.setDefaultLabels({ service: SERVICE_NAME })
+promClient.collectDefaultMetrics({ register: registry })
+
+const httpRequests = new promClient.Counter({
+  name: "http_requests_total",
+  help: "Total HTTP requests",
+  labelNames: ["method", "route", "status"],
+  registers: [registry],
+})
+const httpDuration = new promClient.Histogram({
+  name: "http_request_duration_seconds",
+  help: "HTTP request duration in seconds",
+  labelNames: ["method", "route", "status"],
+  buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+  registers: [registry],
+})
+const cpuPercentGauge = new promClient.Gauge({
+  name: "app_cpu_percent",
+  help: "Process CPU usage as a percent of the container CPU limit",
+  registers: [registry],
+})
+const memPercentGauge = new promClient.Gauge({
+  name: "app_memory_percent",
+  help: "Process RSS as a percent of the container memory limit",
+  registers: [registry],
+})
+
+let lastCpu = process.cpuUsage()
+let lastCpuAt = Date.now()
+setInterval(() => {
+  const now = Date.now()
+  const elapsedMs = now - lastCpuAt || 1
+  const cpuNow = process.cpuUsage()
+  const usedMicros = cpuNow.user - lastCpu.user + (cpuNow.system - lastCpu.system)
+  lastCpu = cpuNow
+  lastCpuAt = now
+  const usedCores = usedMicros / 1000 / elapsedMs // fraction of one core
+  const limitCores = CPU_LIMIT_M / 1000
+  cpuPercentGauge.set(Math.min(100, Math.max(0, Math.round((usedCores / limitCores) * 100))))
+  const rssMb = process.memoryUsage().rss / (1024 * 1024)
+  memPercentGauge.set(Math.min(100, Math.round((rssMb / MEMORY_LIMIT_MB) * 100)))
+}, 5000).unref()
+
+// Time every real request (skip infra endpoints so scrapes/probes aren't counted).
+app.use((req, res, next) => {
+  if (req.path === "/metrics" || req.path === "/health") return next()
+  const end = httpDuration.startTimer()
+  res.on("finish", () => {
+    const labels = { method: req.method, route: req.path, status: String(res.statusCode) }
+    httpRequests.inc(labels)
+    end(labels)
+  })
+  next()
+})
 
 // Downstream services in the real checkout call graph.
 const CONFIG_SERVICE_URL = process.env.CONFIG_SERVICE_URL || "http://config-service"
@@ -196,15 +261,9 @@ app.get("/health", (req, res) => {
   })
 })
 
-app.get("/metrics", (req, res) => {
-  const errorRate = requestCount > 0 ? (errorCount / requestCount) * 100 : 0
-  res.json({
-    errorRate: Math.round(errorRate * 100) / 100,
-    poolWaiting: pool.waitingCount,
-    poolTotal: pool.totalCount,
-    requestCount,
-    errorCount
-  })
+app.get("/metrics", async (req, res) => {
+  res.set("Content-Type", registry.contentType)
+  res.end(await registry.metrics())
 })
 
 // Circuit breaker simulation

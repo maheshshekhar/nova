@@ -1,5 +1,7 @@
 import "server-only"
 
+import { openRouterAttribution } from "@/lib/ai/openrouter"
+
 // Non-streaming chat completion — used by the eval harness (both to generate the
 // candidate output and to run the LLM-as-judge). Production UX paths stream; the
 // harness just needs the final text, so this returns the full string.
@@ -37,8 +39,7 @@ export async function complete(opts: CompleteOptions): Promise<CompleteResult> {
       headers: {
         Authorization: `Bearer ${openrouterKey}`,
         "Content-Type": "application/json",
-        "HTTP-Referer": "http://localhost:3000",
-        "X-Title": "DevOps Dashboard Eval",
+        ...openRouterAttribution(),
       },
       body: JSON.stringify({ model, max_tokens: maxTokens, temperature, messages }),
     })

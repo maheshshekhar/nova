@@ -24,13 +24,13 @@ function baseInput(overrides: Partial<ContextInput> = {}): ContextInput {
     fmt,
     active: null,
     past: [],
-    pastDefaults: { severity: "critical", users: 1842, title: "Primary", failureType: "db-pool-exhaustion" },
+    pastDefaults: { severity: "critical", users: 1234, title: "Primary", failureType: "db-pool-exhaustion" },
     archive: [],
     storedRcas: [],
     evalRuns: [],
     runbooks: [],
     cluster: { available: false, namespaces: [], services: [] },
-    logs: { label: "payment-service", entries: [] },
+    logs: { label: "service-a", entries: [] },
     ...overrides,
   }
 }
@@ -85,14 +85,14 @@ describe("incidentsProvider", () => {
       phase: "incident",
       active: {
         id: "INC-900",
-        service: "payment-service",
+        service: "service-a",
         severity: "critical",
         title: "Live cascade",
         failureType: "db-pool-exhaustion",
         startedAt: 3000,
         users: 50,
       },
-      past: [{ id: "INC-800", service: "payment-service", startedAt: 1000, resolvedAt: 1000 + 120000 }],
+      past: [{ id: "INC-800", service: "service-a", startedAt: 1000, resolvedAt: 1000 + 120000 }],
       archive: [
         {
           id: "INC-700",
@@ -126,13 +126,13 @@ describe("incidentsProvider", () => {
     expect(b.lines[1]).toContain("INCIDENTS (3 total")
     // Sorted by startedAt desc: 3000 (active), 2000 (archive), 1000 (past).
     expect(b.lines[2]).toBe(
-      "- INC-900 | @3000 | payment-service | CRITICAL | ACTIVE | ongoing | db-pool-exhaustion | 50 users | Live cascade"
+      "- INC-900 | @3000 | service-a | CRITICAL | ACTIVE | ongoing | db-pool-exhaustion | 50 users | Live cascade"
     )
     expect(b.lines[3]).toBe(
       "- INC-700 | @2000 | cart | HIGH | resolved | 5m | OOMKilled | 10 users | Old one"
     )
     expect(b.lines[4]).toBe(
-      "- INC-800 | @1000 | payment-service | CRITICAL | resolved | 2m | db-pool-exhaustion | 1,842 users | Primary"
+      "- INC-800 | @1000 | service-a | CRITICAL | resolved | 2m | db-pool-exhaustion | 1,234 users | Primary"
     )
   })
 

@@ -2,8 +2,6 @@
 
 import { useEffect, useRef, useState } from "react"
 import { Bot, Send, Loader2, Sparkles, X, MessageSquare } from "lucide-react"
-import { useLiveState } from "@/lib/live-state"
-import { PRIMARY_INCIDENT } from "@/lib/dashboard-data"
 import { useRealMetrics, useRealLogs } from "@/hooks/use-real-metrics"
 import { getStoredRcas } from "@/components/dashboard/rca-document-modal"
 import { RUNBOOKS } from "@/lib/runbooks"
@@ -79,7 +77,6 @@ function prettifyModel(model: string): string {
 }
 
 export function DevOpsAssistant() {
-  const { phase, currentIncidentId, pastIncidents, incidentStartedAt, impactCount } = useLiveState()
   const realMetrics = useRealMetrics()
   const { logs: realLogs } = useRealLogs()
   const [open, setOpen] = useState(false)
@@ -89,8 +86,9 @@ export function DevOpsAssistant() {
   const [provider, setProvider] = useState<{ name: string; model: string } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Persisted incident archive — refreshed on open and on phase change so the
-  // assistant always grounds time-range answers in the current dataset.
+  // Persisted incident archive — refreshed on open so the assistant always grounds
+  // time-range answers in the current dataset. The active/past incident context is
+  // derived entirely from this real store (no scripted incident).
   const [archive, setArchive] = useState<ApiIncident[]>([])
   useEffect(() => {
     let cancelled = false
@@ -103,7 +101,7 @@ export function DevOpsAssistant() {
     return () => {
       cancelled = true
     }
-  }, [open, phase])
+  }, [open])
 
   // AI quality eval runs — refreshed on open so the assistant can summarize the
   // latest eval scores (golden benchmark + incident-grounded runs).
@@ -119,7 +117,7 @@ export function DevOpsAssistant() {
     return () => {
       cancelled = true
     }
-  }, [open, phase])
+  }, [open])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
@@ -128,34 +126,40 @@ export function DevOpsAssistant() {
   const buildContext = (): string => {
     const now = new Date()
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+    // Active / past incidents come straight from the real store (archive). The
+    // most recent open incident is "active"; resolved ones are "past".
+    const openIncidents = archive
+      .filter((i) => i.status !== "resolved")
+      .sort((a, b) => b.startedAt - a.startedAt)
+    const activeIncident = openIncidents[0] ?? null
+    const resolvedIncidents = archive.filter((i) => i.status === "resolved")
     return renderContext(defaultContextProviders, {
       now,
       timezone: tz,
-      phase,
+      phase: activeIncident ? "incident" : "healthy",
       fmt,
-      active:
-        phase !== "healthy"
-          ? {
-              id: currentIncidentId,
-              service: PRIMARY_INCIDENT.service,
-              severity: PRIMARY_INCIDENT.severity,
-              title: PRIMARY_INCIDENT.title,
-              failureType: "db-pool-exhaustion",
-              startedAt: incidentStartedAt ?? null,
-              users: impactCount,
-            }
-          : null,
-      past: pastIncidents.map((p) => ({
+      active: activeIncident
+        ? {
+            id: activeIncident.id,
+            service: activeIncident.service,
+            severity: activeIncident.severity,
+            title: activeIncident.title,
+            failureType: activeIncident.failureType,
+            startedAt: activeIncident.startedAt,
+            users: activeIncident.affectedUsers,
+          }
+        : null,
+      past: resolvedIncidents.map((p) => ({
         id: p.id,
         service: p.service,
         startedAt: p.startedAt,
-        resolvedAt: p.resolvedAt,
+        resolvedAt: p.resolvedAt ?? p.startedAt,
       })),
       pastDefaults: {
-        severity: PRIMARY_INCIDENT.severity,
-        users: PRIMARY_INCIDENT.affectedUsers,
-        title: PRIMARY_INCIDENT.title,
-        failureType: "db-pool-exhaustion",
+        severity: "medium",
+        users: 0,
+        title: "Incident",
+        failureType: "unknown",
       },
       archive,
       storedRcas: getStoredRcas(),
@@ -166,9 +170,9 @@ export function DevOpsAssistant() {
         namespaces: realMetrics.namespaces,
         services: realMetrics.services,
       },
-      // Log-block label is data-driven (the incident's service), not a hardcoded
-      // domain literal — the engine has no payment-service string baked in.
-      logs: { label: PRIMARY_INCIDENT.service, entries: realLogs },
+      // Log-block label is data-driven (the active incident's service, else a
+      // neutral label) — no domain literal is baked in.
+      logs: { label: activeIncident?.service ?? "cluster", entries: realLogs },
     })
   }
 

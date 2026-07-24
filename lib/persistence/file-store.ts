@@ -3,7 +3,6 @@ import { promises as fs } from "node:fs"
 import path from "node:path"
 import type { StoreState } from "./store"
 import { BaseIncidentStore } from "./base-store"
-import { buildSeedIncidents } from "../incident-seed"
 
 // File adapter — persists the store as a single atomically-written JSON file.
 // In-cluster DATA_DIR points at a host-mounted volume; locally it defaults to
@@ -18,7 +17,7 @@ export interface FileIncidentStoreOptions {
   dataDir?: string
   /** Override the store version (tests). */
   storeVersion?: number
-  /** Override the seeder (tests / empty-core). Defaults to buildSeedIncidents. */
+  /** Override the seeder (tests). Defaults to an empty seeder (no demo data). */
   seed?: (baseMs: number) => StoreState["incidents"]
 }
 
@@ -29,7 +28,7 @@ export class FileIncidentStore extends BaseIncidentStore {
   constructor(opts: FileIncidentStoreOptions = {}) {
     super({
       storeVersion: opts.storeVersion ?? STORE_VERSION,
-      seed: opts.seed ?? buildSeedIncidents,
+      seed: opts.seed ?? (() => []),
     })
     // Resolved lazily at construction so a test that sets DATA_DIR before first
     // use is honoured (matches the previous module-level behaviour).

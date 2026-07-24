@@ -39,6 +39,9 @@ spec:
               value: "http://loki:3100"
             - name: DATA_DIR
               value: "/data"
+            # Point Nova at the mounted config (switches metrics to Prometheus).
+            - name: NOVA_CONFIG
+              value: "/config/nova.config.yaml"
             - name: OPENROUTER_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -71,6 +74,9 @@ spec:
           volumeMounts:
             - name: incident-data
               mountPath: /data
+            - name: nova-config
+              mountPath: /config
+              readOnly: true
       volumes:
         # hostPath resolves to the KinD node's /mnt/dashboard-data, which each node
         # bind-mounts from the host ./data folder (see scripts/cluster).
@@ -80,6 +86,9 @@ spec:
           hostPath:
             path: /mnt/dashboard-data
             type: DirectoryOrCreate
+        - name: nova-config
+          configMap:
+            name: nova-config
 
 ---
 apiVersion: v1

@@ -40,6 +40,12 @@ spec:
             # incident and auto-recovers when it's healthy again.
             - name: PAYMENT_SERVICE_URL
               value: "http://payment-service"
+            - name: SERVICE_NAME
+              value: "transaction-service"
+            - name: MEMORY_LIMIT_MB
+              value: "96"
+            - name: CPU_LIMIT_M
+              value: "100"
           resources:
             requests:
               memory: "48Mi"
@@ -69,9 +75,13 @@ kind: Service
 metadata:
   name: transaction-service
   namespace: production
+  labels:
+    app: transaction-service
+    monitored: "true"
 spec:
   selector:
     app: transaction-service
   ports:
-    - port: 80
+    - name: http
+      port: 80
       targetPort: 8080

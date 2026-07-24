@@ -3,12 +3,12 @@
 # verify-impact — consistency guard for the single-source impact count (Tier 2).
 #
 # The recurring "fixed here, broke there" bugs came from the customer-impact figure
-# (failed checkout 503s) being computed independently on each surface, so the
-# overview, AI blast-radius and RCA showed DIFFERENT numbers. Tier 1 made the count
-# a single source of truth (lib/live-state.tsx -> frozen into the record's
-# affectedUsers). This guard asserts that invariant at the data layer: for every
-# incident that has a generated RCA, the impact figure quoted inside the RCA
-# document (and its context) matches the record's canonical affectedUsers.
+# (failed request 5xx count) being computed independently on each surface, so the
+# overview, AI blast-radius and RCA showed DIFFERENT numbers. The count is now a
+# single source of truth (the incident record's affectedUsers, frozen at resolve).
+# This guard asserts that invariant at the data layer: for every incident that has
+# a generated RCA, the impact figure quoted inside the RCA document (and its
+# context) matches the record's canonical affectedUsers.
 #
 # Usage:
 #   scripts/verify-impact                 # checks http://localhost:3000

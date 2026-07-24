@@ -14,9 +14,8 @@ type StoreModule = typeof import("@/lib/incident-store")
 let store: StoreModule
 
 beforeAll(async () => {
-  // Seed once. Re-seeding before every test is expensive (buildSeedIncidents
-  // generates ~2 years of detailed history) and isn't needed — the tests below
-  // either read the seeded store or write their own fixture file first.
+  // The store starts EMPTY (the bundled demo history was removed) — the tests
+  // below either read the empty store or write their own fixture file first.
   await fs.rm(DATA_DIR, { recursive: true, force: true })
   store = await import("@/lib/incident-store")
 })
@@ -33,14 +32,14 @@ async function readStoreFile() {
   }
 }
 
-describe("seed-on-first-run", () => {
-  it("seeds a non-empty history and writes a versioned store file", async () => {
+describe("empty store on first run", () => {
+  it("starts with an empty history and writes a versioned store file", async () => {
     const list = await store.listIncidents()
-    expect(list.length).toBeGreaterThan(0)
+    expect(list.length).toBe(0)
 
     const file = await readStoreFile()
     expect(file.version).toBeGreaterThanOrEqual(1)
-    expect(file.incidents.length).toBe(list.length)
+    expect(file.incidents.length).toBe(0)
   })
 
   it("returns incidents sorted by startedAt descending", async () => {
@@ -51,11 +50,11 @@ describe("seed-on-first-run", () => {
   })
 })
 
-describe("idempotent seeding (no reseed)", () => {
-  it("does not reseed an existing store — seededAt stays stable", async () => {
-    await store.listIncidents() // triggers the initial seed
+describe("idempotent first-write (no reseed)", () => {
+  it("does not rewrite seededAt on subsequent reads", async () => {
+    await store.listIncidents() // triggers the initial write
     const first = await readStoreFile()
-    await store.listIncidents() // second read must not reseed
+    await store.listIncidents() // second read must not rewrite seededAt
     const second = await readStoreFile()
     expect(second.seededAt).toBe(first.seededAt)
   })
@@ -93,8 +92,8 @@ describe("version upgrade", () => {
 
     const file = await readStoreFile()
     expect(file.version).toBeGreaterThan(1)
-    // Seeded history regenerated alongside the preserved live incident.
-    expect(file.incidents.length).toBeGreaterThan(1)
+    // No demo seed anymore: only the preserved live incident survives the upgrade.
+    expect(file.incidents.length).toBe(1)
   })
 })
 

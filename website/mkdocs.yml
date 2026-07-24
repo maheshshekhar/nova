@@ -1,0 +1,112 @@
+site_name: Nova
+site_description: >-
+  Self-hostable, UI-first AI platform for incident detection, root-cause analysis
+  and remediation — config-driven, source-grounded, and domain-agnostic.
+site_url: https://your-org.github.io/nova/
+repo_url: https://github.com/your-org/nova
+repo_name: your-org/nova
+edit_uri: edit/main/website/docs/
+copyright: Copyright &copy; Nova contributors
+
+theme:
+  name: material
+  language: en
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    # Dark (default) — matches Nova's neon-on-slate dashboard aesthetic.
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: cyan
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.footer
+    - navigation.indexes
+    - toc.follow
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - search.suggest
+    - search.highlight
+    - search.share
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/your-org/nova
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - getting-started/index.md
+      - Quickstart (KinD demo): getting-started/quickstart.md
+      - Configuration: getting-started/configuration.md
+  - Concepts:
+      - concepts/index.md
+      - Architecture: concepts/architecture.md
+      - Adapters & registry: concepts/adapters.md
+      - AI pipeline: concepts/ai-pipeline.md
+      - Domain packs: concepts/domain-packs.md
+      - Incident lifecycle: concepts/incidents.md
+  - Guides:
+      - Point Nova at Prometheus: guides/prometheus.md
+      - Logs & log scope: guides/logs.md
+      - Notifications: guides/notifications.md
+      - Evaluation harness: guides/eval.md
+  - Reference:
+      - Config schema: reference/config.md
+      - API routes: reference/api.md
+  - Roadmap: roadmap.md

@@ -380,6 +380,14 @@ done
 # resolve to the kube-prometheus-stack Alertmanager pod.
 kubectl apply -f examples/kind-demo/k8s/alertmanager-alias.yaml
 
+# ServiceMonitor for the app workloads (CRD is provided by kube-prometheus-stack,
+# installed above). Prometheus scrapes the apps' real /metrics via this.
+kubectl apply -f examples/kind-demo/k8s/servicemonitors.yaml
+
+# Nova config (switches the dashboard's metrics source to Prometheus). Must exist
+# before the dashboard pod starts so the mounted config is present at boot.
+kubectl apply -f examples/kind-demo/k8s/nova-config.yaml
+
 kubectl apply -f examples/kind-demo/k8s/dashboard-rbac.yaml
 kubectl apply -f examples/kind-demo/k8s/dashboard.yaml
 

@@ -1,9 +1,13 @@
-// Pure (React-free) helpers for the live error-rate / latency series that drive
-// the overview charts AND the top stat tiles. Kept here — with no React or
+// Pure (React-free) helpers for the live error-rate series that drives the
+// overview Error Rate chart AND the top stat tiles. Kept here — with no React or
 // recharts imports — so both the lightweight MetricsLiveProvider and the heavy
 // chart components can share the exact same math without an import cycle.
-
-import { amplifyErrorRate } from "@/lib/dashboard-data"
+//
+// De-static: this file derives its series ONLY from real, source-reported error
+// rates. There is no latency series (the collector does not measure latency) and
+// no error-rate amplification — the chart shows the raw, smoothed rate. The caller
+// passes the already-filtered set of application services, so nothing here
+// references a specific service by name.
 
 // Number of samples kept in the live rolling window (~3s cadence). 1200 ≈ 1 hour,
 // so past incident spikes stay visible in the chart until they age out of the hour.
@@ -19,11 +23,10 @@ const SMOOTH_ALPHA = 0.3
 const ema = (prev: number, next: number) =>
   Math.round((prev + SMOOTH_ALPHA * (next - prev)) * 100) / 100
 
-export type ErrorPoint = { time: string; rate: number; p99: number }
-export type LatencyPoint = { time: string; p50: number; p95: number; p99: number }
+export type ErrorPoint = { time: string; rate: number }
 
 // Structural subset of the real metrics a series sample is derived from.
-type SeriesService = { name: string; errorRate: number; avgCpu: number }
+type SeriesService = { name: string; errorRate: number }
 
 const clockLabel = (t = Date.now()) =>
   new Date(t).toLocaleTimeString("en-US", {
@@ -37,35 +40,23 @@ const clockLabel = (t = Date.now()) =>
 const seedTimes = (): string[] =>
   Array.from({ length: WINDOW }, (_, i) => clockLabel(Date.now() - (WINDOW - 1 - i) * 3000))
 
-// Seed the live series flat at zero so an infra-only cluster (no app traffic yet)
-// starts clean instead of showing a fabricated baseline; real samples then stream
-// in from the right and ramp the lines up once app services are serving traffic.
+// Seed the live series flat at zero so a cluster with no error traffic starts
+// clean; real samples then stream in from the right and ramp the line up when
+// services actually report elevated error rates.
 export const seedErrorSeries = (): ErrorPoint[] =>
-  seedTimes().map((time) => ({ time, rate: 0, p99: 0 }))
+  seedTimes().map((time) => ({ time, rate: 0 }))
 
-export const seedLatencySeries = (): LatencyPoint[] =>
-  seedTimes().map((time) => ({ time, p50: 0, p95: 0, p99: 0 }))
-
-// Monitored app services whose incidents drive the charts + stat tiles.
-const MONITORED_SERVICES = ["payment-service", "config-service", "transaction-service"]
-
-// Aggregate error rate: sum of per-service amplified error (each capped) so two or
-// three concurrent incidents read progressively higher instead of a single incident
-// already saturating the amplified cap.
-export function aggregateErrorRate(services: { name: string; errorRate: number }[]): number {
-  const total = MONITORED_SERVICES.reduce((sum, n) => {
-    const s = services.find((x) => x.name === n)
-    return s ? sum + Math.min(amplifyErrorRate(s.errorRate), 14) : sum
-  }, 0)
-  return Math.min(Math.round(total * 100) / 100, 42)
-}
-
-// Highest CPU across the monitored services (for latency derivation).
-function worstMonitoredCpu(services: { name: string; avgCpu: number }[]): number {
-  return Math.max(
-    0,
-    ...MONITORED_SERVICES.map((n) => services.find((s) => s.name === n)?.avgCpu ?? 0)
+// Aggregate (fleet) error rate: the mean raw error rate across the provided
+// services. The caller passes the already-filtered set of application services
+// (infra workloads removed via config), so this stays domain-agnostic and never
+// references a specific service by name. No amplification — raw values only.
+export function aggregateErrorRate(services: { errorRate: number }[]): number {
+  if (services.length === 0) return 0
+  const sum = services.reduce(
+    (a, s) => a + (Number.isFinite(s.errorRate) ? s.errorRate : 0),
+    0
   )
+  return Math.round((sum / services.length) * 100) / 100
 }
 
 // Advance the rolling error-rate series by one smoothed sample from the real
@@ -73,31 +64,8 @@ function worstMonitoredCpu(services: { name: string; avgCpu: number }[]): number
 export function advanceErrorSeries(prev: ErrorPoint[], services: SeriesService[]): ErrorPoint[] {
   const agg = aggregateErrorRate(services)
   const last = prev[prev.length - 1]
-  const rate = ema(last.rate, agg)
-  return [...prev.slice(1), { time: clockLabel(), rate, p99: Math.round(rate * 1.35 * 100) / 100 }]
-}
-
-// Advance the rolling latency series. Latency isn't collected directly, so p50/p95/
-// p99 are derived from the real CPU + (amplified) aggregate error. The payment
-// failure is a connection-pool WAIT (not CPU-bound), so CPU stays low and the error
-// term carries the spike — weighted so a single active incident breaches the 500ms SLO.
-export function advanceLatencySeries(prev: LatencyPoint[], services: SeriesService[]): LatencyPoint[] {
-  // No monitored app service present (infra-only) → no traffic → latency decays to
-  // zero, so the chart + tiles fall back to 0 when the app namespace is removed.
-  const hasApp = MONITORED_SERVICES.some((n) => services.some((s) => s.name === n))
-  const agg = aggregateErrorRate(services)
-  const cpu = worstMonitoredCpu(services)
-  const last = prev[prev.length - 1]
-  const p50base = hasApp ? 40 + Math.max(0, cpu - 30) * 3.5 : 0
-  return [
-    ...prev.slice(1),
-    {
-      time: clockLabel(),
-      p50: ema(last.p50, p50base),
-      p95: ema(last.p95, hasApp ? p50base * 2.6 + agg * 45 : 0),
-      p99: ema(last.p99, hasApp ? p50base * 3.8 + agg * 90 : 0),
-    },
-  ]
+  const rate = ema(last?.rate ?? 0, agg)
+  return [...prev.slice(1), { time: clockLabel(), rate }]
 }
 
 // ── Persistence ───────────────────────────────────────────────────────────────
@@ -107,7 +75,6 @@ export function advanceLatencySeries(prev: LatencyPoint[], services: SeriesServi
 // takes several minutes and stops the poll) starts from a clean healthy baseline
 // instead of resurrecting the previous session's lines / error rate.
 export const ERROR_KEY = "nova-error-series"
-export const LATENCY_KEY = "nova-latency-series"
 // Persisted series older than this is treated as belonging to a previous cluster
 // session and dropped. Long enough to survive a page reload, short enough that a
 // teardown+setup cycle never brings back stale lines.

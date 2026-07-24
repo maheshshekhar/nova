@@ -190,9 +190,10 @@ export function selectIncidentLogs(
 // back-compatible wrapper so existing call sites keep working unchanged.
 
 /**
- * Count checkout-failure signals (HTTP 503 on payment-service) in the given logs,
- * optionally restricted to an incident window. Returns 0 when there are none —
- * callers fall back to a static estimate in that case.
+ * Count server-error impact signals (from the default domain's impact signal:
+ * 5xx / service unavailable / timeout) in the given logs, optionally restricted
+ * to an incident window. Returns 0 when there are none. Named for back-compat;
+ * the matcher is generic and domain-agnostic (a Domain Pack can narrow it).
  */
 export function countCheckoutFailures(
   logs: RawLogEntry[],

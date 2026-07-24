@@ -1,13 +1,24 @@
 import { NextRequest, NextResponse } from "next/server"
 import * as k8s from "@kubernetes/client-node"
 
-const kc = new k8s.KubeConfig()
-if (process.env.KUBERNETES_SERVICE_HOST) {
-  kc.loadFromCluster()
-} else {
-  kc.loadFromDefault()
+export const dynamic = "force-dynamic"
+
+// Lazily build the k8s client on first request so the module has NO import-time
+// side effects — the production build / page-data collection never needs a live
+// cluster or kubeconfig.
+let appsApiSingleton: k8s.AppsV1Api | null = null
+function getAppsApi(): k8s.AppsV1Api {
+  if (!appsApiSingleton) {
+    const kc = new k8s.KubeConfig()
+    if (process.env.KUBERNETES_SERVICE_HOST) {
+      kc.loadFromCluster()
+    } else {
+      kc.loadFromDefault()
+    }
+    appsApiSingleton = kc.makeApiClient(k8s.AppsV1Api)
+  }
+  return appsApiSingleton
 }
-const appsApi = kc.makeApiClient(k8s.AppsV1Api)
 
 // Application workloads live in the production namespace.
 const NAMESPACE = "production"
@@ -44,7 +55,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const read = await appsApi.readNamespacedDeployment(service, NAMESPACE)
+    const read = await getAppsApi().readNamespacedDeployment(service, NAMESPACE)
     const dep = read.body
 
     if (!dep.spec) throw new Error("deployment has no spec")
@@ -89,7 +100,7 @@ export async function POST(req: NextRequest) {
     dep.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"] =
       new Date().toISOString()
 
-    await appsApi.replaceNamespacedDeployment(service, NAMESPACE, dep)
+    await getAppsApi().replaceNamespacedDeployment(service, NAMESPACE, dep)
 
     return NextResponse.json({ success: true, service, action, message: summary })
   } catch (err: any) {

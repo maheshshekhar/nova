@@ -108,10 +108,11 @@ export const PersistenceConfigSchema = z
     provider: z.enum(["file", "mongo", "postgres", "s3"]).default("file"),
     // File adapter default: keep using the DATA_DIR env / ./data as today.
     dataDir: z.string().optional(),
-    // Whether a fresh store is seeded with the bundled demo incident history.
-    // "demo" (default) reproduces the running demo; a real deployment sets "none"
-    // to start with an empty store driven entirely by live incidents.
-    seed: z.enum(["demo", "none"]).default("demo"),
+    // The bundled demo incident history was removed (de-static work): the store
+    // now always starts empty and is driven entirely by live incidents. The
+    // `seed` field is retained for backward-compatibility and defaults to "none";
+    // "demo" is still accepted but no longer ships any content.
+    seed: z.enum(["demo", "none"]).default("none"),
   })
   .passthrough()
   .default({})
@@ -122,10 +123,86 @@ export const MetricsConfigSchema = z
   .object({
     provider: z.enum(["prometheus", "http", "none"]).default("http"),
     url: z.string().optional(),
+    // Prometheus adapter (provider: prometheus). Nova is only a PromQL CLIENT —
+    // it queries an existing Prometheus, it never scrapes. The queries below are
+    // config-driven so the adapter stays domain-agnostic: each entry maps a
+    // metric key (see lib/metrics/descriptors.ts) to a PromQL expression that
+    // MUST return an instant vector labelled by `serviceLabel`. Only the keys the
+    // operator configures are populated; everything else is simply absent.
+    authTokenEnv: z.string().optional(),
+    serviceLabel: z.string().default("service"),
+    queries: z.record(z.string()).default({}),
   })
   .passthrough()
   .default({})
 export type MetricsConfig = z.infer<typeof MetricsConfigSchema>
+
+// ── Dashboard (de-static: source-driven, config-curated presentation) ────────
+// The dashboard renders only values that come from a real source. This section
+// lets an integrator *curate* that presentation without hardcoding any service
+// or value: which workloads are infrastructure vs application, which service-
+// table columns / stat tiles to show, and per-metric threshold overrides.
+//
+// Every field defaults to "auto" behaviour so `parse({})` reproduces the
+// capability-driven auto-discovery (columns/tiles appear only when a real value
+// exists). A tile's `metric` binds to a real metric key (see
+// lib/metrics/descriptors.ts) — tiles with no real source never render.
+export const DashboardTileSchema = z
+  .object({
+    id: z.string(),
+    label: z.string().optional(),
+    // A tile is bound EITHER to a real metric key (`metric`, a fleet aggregate)
+    // OR to a PromQL expression (`query`, executed server-side against the
+    // configured Prometheus — never in the browser). At least one is required.
+    metric: z.string().optional(),
+    query: z.string().optional(),
+    // Display suffix for query tiles (e.g. "ms", "%", "/s").
+    unit: z.string().optional(),
+    // Per-tile tone thresholds (lower-better assumed).
+    thresholds: z
+      .object({ warn: z.number().optional(), critical: z.number().optional() })
+      .strict()
+      .optional(),
+  })
+  .passthrough()
+  .refine((t) => !!t.metric || !!t.query, {
+    message: "a dashboard tile requires either `metric` or `query`",
+  })
+export type DashboardTile = z.infer<typeof DashboardTileSchema>
+
+export const ThresholdOverrideSchema = z
+  .object({
+    warn: z.number().optional(),
+    critical: z.number().optional(),
+  })
+  .strict()
+export type ThresholdOverride = z.infer<typeof ThresholdOverrideSchema>
+
+export const DashboardConfigSchema = z
+  .object({
+    // Workload name(s) or substrings treated as infrastructure and excluded
+    // from the "application services" view. Domain-agnostic: empty by default.
+    infraWorkloads: z.array(z.string()).default([]),
+    serviceTable: z
+      .object({
+        // "auto" = show a column for every metric field the source reports.
+        // A list pins an explicit ordered set of metric keys.
+        columns: z.union([z.literal("auto"), z.array(z.string())]).default("auto"),
+      })
+      .default({}),
+    stats: z
+      .object({
+        // "auto" = derive stat tiles from real aggregates. A list pins explicit
+        // tile definitions, each bound to a real metric key.
+        tiles: z.union([z.literal("auto"), z.array(DashboardTileSchema)]).default("auto"),
+      })
+      .default({}),
+    // Per-metric threshold overrides (metric key → { warn, critical }) applied
+    // on top of the descriptor defaults in lib/metrics/descriptors.ts.
+    thresholds: z.record(ThresholdOverrideSchema).default({}),
+  })
+  .default({})
+export type DashboardConfig = z.infer<typeof DashboardConfigSchema>
 
 // ── Detection & impact (consumed at M6) ──────────────────────────────────────
 export const ImpactSignalSchema = z
@@ -324,6 +401,7 @@ export const NovaConfigSchema = z
     logs: LogsConfigSchema,
     persistence: PersistenceConfigSchema,
     metrics: MetricsConfigSchema,
+    dashboard: DashboardConfigSchema,
     detection: DetectionConfigSchema,
     context: ContextConfigSchema,
     prompts: PromptsConfigSchema,

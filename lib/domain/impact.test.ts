@@ -63,15 +63,14 @@ describe("countImpactSignals — window", () => {
   })
 })
 
-describe("default domain impact signal reproduces the legacy checkout counter", () => {
-  it("matches 503 / service unavailable / pool.connect timeout / too many connections", () => {
+describe("default domain impact signal counts server-error impact generically", () => {
+  it("matches 5xx / service unavailable / timeout", () => {
     const logs: RawLogEntry[] = [
       { message: "503 Service Unavailable" },
-      { message: "Service Unavailable" },
-      { message: "pool.connect() timeout" },
-      { message: "FATAL: too many connections" },
+      { message: "502 Bad Gateway" },
+      { message: "upstream request timeout" },
       { message: "everything is fine" },
     ]
-    expect(countImpactSignals(logs, DEFAULT_DOMAIN.impactSignal)).toBe(4)
+    expect(countImpactSignals(logs, DEFAULT_DOMAIN.impactSignal)).toBe(3)
   })
 })

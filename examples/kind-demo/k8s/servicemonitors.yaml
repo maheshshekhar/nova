@@ -1,0 +1,24 @@
+# ServiceMonitor for the application workloads. kube-prometheus-stack's Prometheus
+# discovers this (the values set serviceMonitorSelectorNilUsesHelmValues: false, so
+# ALL ServiceMonitors are selected) and scrapes each Service labelled
+# `monitored: "true"` on its named `http` port at /metrics. The apps expose real
+# service-labelled Prometheus metrics (http_requests_total,
+# http_request_duration_seconds, app_cpu_percent, app_memory_percent).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: production-apps
+  namespace: production
+  labels:
+    release: my-prometheus
+spec:
+  namespaceSelector:
+    matchNames: [production]
+  selector:
+    matchLabels:
+      monitored: "true"
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 10s
+      scrapeTimeout: 5s

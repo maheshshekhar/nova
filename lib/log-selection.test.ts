@@ -95,12 +95,12 @@ describe("selectIncidentLogs — formatting", () => {
 })
 
 describe("countCheckoutFailures", () => {
-  it("counts 503 / service-unavailable / pool-timeout / too-many-connections signals", () => {
+  it("counts 5xx / service-unavailable / timeout signals", () => {
     const logs: RawLogEntry[] = [
       { message: "POST /api/checkout 503 Service Unavailable" },
-      { message: "pool.connect() timeout after 5000ms" },
-      { message: "FATAL: too many connections for role payment_svc" },
-      { message: "checkout completed ok" }, // not a failure
+      { message: "gateway timeout after 5000ms" },
+      { message: "502 Bad Gateway from upstream" },
+      { message: "request completed ok" }, // not a failure
     ]
     expect(countCheckoutFailures(logs)).toBe(3)
   })

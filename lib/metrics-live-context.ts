@@ -5,15 +5,15 @@
 
 import { createContext } from "react"
 import type { RealMetricsState } from "@/hooks/use-real-metrics"
-import type { ErrorPoint, LatencyPoint } from "@/lib/metrics-series"
+import type { ErrorPoint } from "@/lib/metrics-series"
 
 export interface MetricsLiveValue {
   // The latest real cluster metrics (single shared poll).
   realMetrics: RealMetricsState
-  // Smoothed rolling series, advanced once per poll tick so every consumer
-  // (both charts + the stat tiles) reads identical numbers on the same tick.
+  // Smoothed rolling error-rate series, advanced once per poll tick so every
+  // consumer (the Error Rate chart + the stat tiles) reads identical numbers on
+  // the same tick.
   errorSeries: ErrorPoint[]
-  latencySeries: LatencyPoint[]
 }
 
 export const MetricsLiveContext = createContext<MetricsLiveValue | null>(null)

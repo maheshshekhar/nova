@@ -21,7 +21,7 @@ end-to-end.
 - [Scripts reference](#scripts-reference)
 - [Services & API routes](#services--api-routes)
 - [The incident flow](#the-incident-flow)
-- [Live vs. simulated data](#live-vs-simulated-data)
+- [Live vs. empty data](#live-vs-empty-data)
 - [Stopping & cleaning up Caddy / mkcert](#stopping--cleaning-up-caddy--mkcert)
 - [Troubleshooting](#troubleshooting)
 
@@ -266,35 +266,37 @@ endpoint returns 503 once `errorRate > 50%`, which trips the liveness probe.
 ```mermaid
 stateDiagram-v2
     [*] --> HEALTHY
-    HEALTHY --> DEGRADING: click "Simulate Incident"
-    DEGRADING --> INCIDENT: after 60s · pool exhausted
-    INCIDENT --> ANALYZING: click "Analyze with AI"
+    HEALTHY --> INCIDENT: inject-failure · k6 load exhausts the pool
+    INCIDENT --> DETECTED: Loki ruler fires → /api/alerts opens the incident
+    DETECTED --> ANALYZING: open the incident · "Analyze with AI"
     ANALYZING --> RECOVERING: AI streams root-cause analysis
-    RECOVERING --> STABILIZED: engineer completes recovery checklist
-    STABILIZED --> HEALTHY: auto-reset
+    RECOVERING --> STABILIZED: approve the matched runbook (real remediation)
+    STABILIZED --> HEALTHY: pods Ready → incident resolved in the store
     HEALTHY --> [*]
 ```
 
-- **Browser-driven (no cluster):** the `Simulate Incident` button runs a 90s state machine
-  (`lib/live-state.tsx`) — DEGRADING at click, INCIDENT at 60s.
-- **Cluster-driven:** the same button also calls `POST /api/inject`, which launches the k6
-  load Job so the *real* `payment-service` fails. `recover` (or the checklist narrative)
-  restores it.
+The flow is entirely **source-driven** — there is no scripted client state machine.
+`inject-failure` launches the k6 load Job so the *real* `payment-service` fails; the
+Loki ruler detects the ERROR/503 spike and `POST /api/alerts` opens a real incident in
+the store. The dashboard reflects it from `/api/metrics` + `/api/incidents`. Approving
+the matched runbook performs the real cluster remediation and resolves the incident
+(`recover` does the same from the CLI).
 
 ---
 
-## Live vs. simulated data
+## Live vs. empty data
 
-The dashboard is designed to be **identical with or without a cluster**:
+The dashboard is **fully source-driven** — every value comes from a real source, and when
+a source is unreachable it shows an empty / offline state (never fabricated data):
 
 - **Service health table** shows `LIVE` (green) when `metrics-collector` is reachable and
-  overrides matching rows with real pod CPU/memory/error-rate/status/pod-count; otherwise it
-  shows `SIMULATED`.
+  renders real pod CPU/memory/error-rate/status/pod-count; otherwise it shows `OFFLINE`
+  with a "collector unreachable" empty state.
 - **Logs page** streams real cluster logs from Loki (`LIVE — cluster logs`); before the first
   poll lands, or when Loki is unreachable, it shows `OFFLINE`. There is no static fallback stream.
-- **Incident `INC-2847`** uses real cluster logs for its Related Logs panel and for the AI
-  analysis when available (a green `LIVE` / `LIVE LOGS` badge appears); otherwise it uses the
-  static incident logs. `INC-2846` / `INC-2845` always use static logs.
+- **Incidents** come entirely from the store (`/api/incidents`), created by the Loki ruler →
+  `/api/alerts` when a real ERROR/503 spike is detected. Related Logs + AI analysis use the
+  service's real pod logs; the AI RCA is generated on demand by the configured LLM.
 
 All cluster reads go through one poller each (3s interval) and degrade gracefully on error.
 
@@ -328,7 +330,7 @@ rm -rf certs/                                # delete the generated cert + key
 | `kind`/`kubectl`/`docker`/`helm` not found | Install them (see [Prerequisites](#prerequisites)); ensure Docker Desktop is running. |
 | Dashboard not on `localhost:3000` | Run `./scripts/port-forward` (the pod must be Ready first). Check `/tmp/nova-portforward.log`. |
 | `https://nova` not loading | Ensure `mkcert` + `caddy` are installed, `/etc/hosts` has `127.0.0.1 nova`, the port-forward is up (`http://localhost:3000` works), and Caddy is running. Re-run `./scripts/cluster` or `sudo caddy start --config certs/Caddyfile`. |
-| Table stuck on `SIMULATED` | `metrics-collector` not reachable — check `kubectl get pods -n production` and `METRICS_COLLECTOR_URL`. The dashboard still works on simulated data. |
+| Table stuck on `OFFLINE` | `metrics-collector` not reachable — check `kubectl get pods -n production` and `METRICS_COLLECTOR_URL`. The dashboard shows an empty state until it can reach a live source. |
 | "Analyze with AI" errors | No AI key configured — set `OPENROUTER_API_KEY` (or `ANTHROPIC_API_KEY`) in the `ai-keys` secret. |
 | Helm release stuck / failed | `helm -n nova-monitoring status <loki\|grafana\|my-prometheus\|fluent-bit>`; re-run `./scripts/cluster` (installs are idempotent). |
 | Image change not picked up | Delete its build stamp in `.build-cache/` or the Docker image, then re-run `cluster`. |

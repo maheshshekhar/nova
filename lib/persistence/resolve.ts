@@ -4,22 +4,21 @@ import { getConfig } from "../config/loader"
 import type { PersistenceConfig } from "../config/schema"
 import type { PersistenceStore, StoreState } from "./store"
 import { FileIncidentStore } from "./file-store"
-import { buildSeedIncidents } from "../incident-seed"
 
 // Persistence adapter registry + resolver. The configured `persistence.provider`
 // is turned into a concrete store here. M2 registers only "file"; Mongo/Postgres/
 // S3 register later (each verified by the shared contract-test kit).
 
 /**
- * Select the store seeder from config. The bundled demo history is DATA, not a
- * core assumption: `persistence.seed: none` gives an empty store driven purely by
- * live incidents (the real OSS deployment), while "demo" (default) reproduces the
- * bundled demo. Returns a seeder either way so `BaseIncidentStore` is unchanged.
+ * Select the store seeder from config. The bundled demo incident history was
+ * removed (de-static work), so every deployment now starts with an EMPTY store
+ * driven purely by live incidents. Returns a seeder so `BaseIncidentStore` is
+ * unchanged; a future generic seeder can plug in here.
  */
 export function resolveSeeder(
-  cfg: PersistenceConfig
+  _cfg: PersistenceConfig
 ): (baseMs: number) => StoreState["incidents"] {
-  return cfg.seed === "none" ? () => [] : buildSeedIncidents
+  return () => []
 }
 
 export const persistenceRegistry = new AdapterRegistry<PersistenceConfig, PersistenceStore>(

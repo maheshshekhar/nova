@@ -1,0 +1,33 @@
+# Nova configuration for the KinD demo — switches the dashboard's metrics source
+# to the demo's Prometheus (production parity). Mounted into the dashboard pod at
+# /app/nova.config.yaml and selected via the NOVA_CONFIG env var (see dashboard.yaml).
+#
+# Nova is only a PromQL CLIENT: it queries `prometheus-operated` (the operator's
+# stable headless service), it never scrapes. The apps expose real service-labelled
+# metrics (http_requests_total, http_request_duration_seconds, app_cpu_percent,
+# app_memory_percent); kube-prometheus-stack scrapes them via the `production-apps`
+# ServiceMonitor. Pod counts are still merged from the metrics-collector (hybrid),
+# so the Deployments panel and "Ready" pod counts keep working.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nova-config
+  namespace: nova-monitoring
+data:
+  nova.config.yaml: |
+    # Payments Domain Pack — restores the demo's payment-service grounding
+    # (glossary, service catalog, impact signal, remediation guidance) and its
+    # db-pool-exhaustion runbook, which the generic default domain doesn't carry.
+    domain: ./domains/payments.yaml
+    metrics:
+      provider: prometheus
+      url: http://prometheus-operated.nova-monitoring:9090
+      serviceLabel: service
+      queries:
+        errorRate:  'sum by (service)(rate(http_requests_total{status=~"5.."}[1m])) / sum by (service)(rate(http_requests_total[1m])) * 100'
+        rps:        'sum by (service)(rate(http_requests_total[1m]))'
+        latencyP50: 'histogram_quantile(0.50, sum by (service, le)(rate(http_request_duration_seconds_bucket[1m]))) * 1000'
+        latencyP95: 'histogram_quantile(0.95, sum by (service, le)(rate(http_request_duration_seconds_bucket[1m]))) * 1000'
+        latencyP99: 'histogram_quantile(0.99, sum by (service, le)(rate(http_request_duration_seconds_bucket[1m]))) * 1000'
+        avgCpu:     'avg by (service)(app_cpu_percent)'
+        avgMemory:  'avg by (service)(app_memory_percent)'

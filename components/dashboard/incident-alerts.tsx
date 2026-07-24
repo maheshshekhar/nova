@@ -2,9 +2,6 @@
 
 import { useState, useEffect, type ReactNode } from "react"
 import { AlertTriangle, ArrowUpRight, CheckCircle2, Clock, Users, Zap } from "lucide-react"
-import { makeActiveIncident } from "@/lib/dashboard-data"
-import { useLiveState } from "@/lib/live-state"
-import { useIncidentMetrics } from "@/hooks/use-incident-metrics"
 import Link from "next/link"
 
 // Fades its children in on first mount (used when an incident first appears).
@@ -28,7 +25,6 @@ const severityConfig = {
     text: "text-[var(--neon-red)]",
     badge: "bg-[var(--neon-red)]/15 text-[var(--neon-red)] border-[var(--neon-red)]/30",
     dot: "bg-[var(--neon-red)]",
-    glow: "neon-glow-red",
   },
   high: {
     bg: "bg-[var(--neon-orange)]/10",
@@ -36,7 +32,6 @@ const severityConfig = {
     text: "text-[var(--neon-orange)]",
     badge: "bg-[var(--neon-orange)]/15 text-[var(--neon-orange)] border-[var(--neon-orange)]/30",
     dot: "bg-[var(--neon-orange)]",
-    glow: "neon-glow-orange",
   },
   medium: {
     bg: "bg-[var(--neon-yellow)]/10",
@@ -44,15 +39,13 @@ const severityConfig = {
     text: "text-[var(--neon-yellow)]",
     badge: "bg-[var(--neon-yellow)]/15 text-[var(--neon-yellow)] border-[var(--neon-yellow)]/30",
     dot: "bg-[var(--neon-yellow)]",
-    glow: "",
   },
-  resolved: {
-    bg: "bg-[var(--neon-green)]/10",
-    border: "border-[var(--neon-green)]/30",
-    text: "text-[var(--neon-green)]",
-    badge: "bg-[var(--neon-green)]/15 text-[var(--neon-green)] border-[var(--neon-green)]/30",
-    dot: "bg-[var(--neon-green)]",
-    glow: "",
+  low: {
+    bg: "bg-[var(--neon-cyan)]/10",
+    border: "border-[var(--neon-cyan)]/30",
+    text: "text-[var(--neon-cyan)]",
+    badge: "bg-[var(--neon-cyan)]/15 text-[var(--neon-cyan)] border-[var(--neon-cyan)]/30",
+    dot: "bg-[var(--neon-cyan)]",
   },
 } as const
 
@@ -61,7 +54,6 @@ const statusLabel: Record<string, string> = {
   mitigating: "MITIGATING",
   monitoring: "MONITORING",
   resolved: "STABILIZED",
-  detecting: "DETECTING",
 }
 
 function agoLabel(ms: number): string {
@@ -74,80 +66,42 @@ function agoLabel(ms: number): string {
   return `${Math.round(hr / 24)}d ago`
 }
 
-type AlertRow = {
+type RawIncident = {
   id: string
   title: string
   service: string
   severity: string
   status: string
-  started: string
-  affectedUsers: number
-  impactLabel?: string
-  detecting: boolean
+  startedAt: number
+  affectedUsers?: number
 }
 
+// Overview "Active Incidents" widget — driven entirely by the real incident store
+// (/api/incidents). Shows every open (non-resolved) incident; no scripted or
+// fabricated incident.
 export function IncidentAlerts() {
-  const { phase, secondsElapsed, resolvedIncidents: resolvedIds, currentIncidentId } = useLiveState()
+  const [incidents, setIncidents] = useState<RawIncident[]>([])
 
-  // The payment-service cascade (scripted via live-state phase).
-  const detecting = phase === "degrading" && secondsElapsed >= 45
-  const active = makeActiveIncident(currentIncidentId)
-  const paymentVisible = phase === "incident" || detecting
-
-  // Canonical per-incident figures via the shared hook (single source of truth) so
-  // the overview matches the incident page, AI analysis and RCA exactly.
-  const activeMetrics = useIncidentMetrics({ record: null, isActive: true, resolved: false })
-  const activeStarted = activeMetrics.startedAtMs != null ? agoLabel(activeMetrics.startedAtMs) : active.started
-  // Use the LIVE checkout-503 count (ramps up from 0 and freezes at resolve). Do
-  // NOT fall back to the static PRIMARY_INCIDENT figure — that made a freshly
-  // detected incident briefly flash 1,842 before the real count accrued.
-  const activeAffected = activeMetrics.impactCount
-  const activeImpactLabel = activeMetrics.impactCount > 0 ? "impacted checkouts (503)" : "users affected"
-
-  // Live incidents (e.g. config-service / transaction-service from
-  // inject-config-failure) — polled so they appear and clear automatically.
-  const [liveIncidents, setLiveIncidents] = useState<AlertRow[]>([])
   useEffect(() => {
     let cancelled = false
     const load = () =>
-      fetch("/api/incidents?range=all")
+      fetch("/api/incidents?range=all", { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           if (cancelled) return
-          type RawIncident = {
-            id: string
-            title: string
-            service: string
-            severity: string
-            status: string
-            startedAt: number
-            affectedUsers?: number
-            origin?: string
-          }
-          const raw: RawIncident[] = (d?.incidents ?? []).filter(
-            (i: RawIncident) =>
-              i.origin === "live" && i.status !== "resolved" && i.id !== currentIncidentId
+          const open: RawIncident[] = (d?.incidents ?? []).filter(
+            (i: RawIncident) => i.status !== "resolved"
           )
-          // Dedupe by service — re-running an inject script creates another record
-          // for the same outage; only the earliest (canonical) one is shown.
+          // Dedupe by service — a re-run inject creates another record for the same
+          // outage; keep the earliest (canonical) one.
           const bySvc = new Map<string, RawIncident>()
-          for (const i of raw) {
+          for (const i of open) {
             const existing = bySvc.get(i.service)
             if (!existing || i.startedAt < existing.startedAt) bySvc.set(i.service, i)
           }
-          const rows: AlertRow[] = Array.from(bySvc.values())
-            .sort((a, b) => a.startedAt - b.startedAt)
-            .map((i) => ({
-              id: i.id,
-              title: i.title,
-              service: i.service,
-              severity: i.severity,
-              status: i.status,
-              started: agoLabel(i.startedAt),
-              affectedUsers: i.affectedUsers ?? 0,
-              detecting: false,
-            }))
-          setLiveIncidents(rows)
+          setIncidents(
+            Array.from(bySvc.values()).sort((a, b) => b.startedAt - a.startedAt)
+          )
         })
         .catch(() => {})
     load()
@@ -156,31 +110,7 @@ export function IncidentAlerts() {
       cancelled = true
       clearInterval(t)
     }
-  }, [currentIncidentId])
-
-  const visibleIncidents: AlertRow[] = [
-    ...(paymentVisible
-      ? [
-          {
-            id: active.id,
-            title: active.title,
-            service: active.service,
-            severity: active.severity,
-            status: active.status,
-            started: activeStarted,
-            affectedUsers: activeAffected,
-            impactLabel: activeImpactLabel,
-            detecting,
-          },
-        ]
-      : []),
-    // The active payment cascade above already represents the payment-service
-    // outage — drop any live payment-service record so the same incident never
-    // appears twice.
-    ...liveIncidents.filter((row) => !(paymentVisible && row.service === active.service)),
-  ]
-
-  const activeCount = visibleIncidents.filter((inc) => !resolvedIds.includes(inc.id)).length
+  }, [])
 
   return (
     <section>
@@ -190,11 +120,11 @@ export function IncidentAlerts() {
             Active Incidents
           </h2>
           <span className={`w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center ${
-            activeCount > 0
+            incidents.length > 0
               ? "bg-[var(--neon-red)]/15 border border-[var(--neon-red)]/30 text-[var(--neon-red)]"
               : "bg-[var(--neon-green)]/15 border border-[var(--neon-green)]/30 text-[var(--neon-green)]"
           }`}>
-            {activeCount}
+            {incidents.length}
           </span>
         </div>
         <Link href="/incidents" className="text-xs text-primary hover:text-[var(--neon-cyan)] transition-colors flex items-center gap-1">
@@ -202,19 +132,16 @@ export function IncidentAlerts() {
         </Link>
       </div>
 
-      {visibleIncidents.length === 0 ? (
+      {incidents.length === 0 ? (
         <div className="card-glass rounded-lg px-4 py-6 flex items-center justify-center gap-2 border border-[var(--neon-green)]/20 bg-[var(--neon-green)]/5">
           <CheckCircle2 className="w-4 h-4 text-[var(--neon-green)]" />
           <span className="text-xs font-mono font-semibold text-[var(--neon-green)]">All systems operational</span>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {visibleIncidents.map((inc) => {
-            const incidentResolved = resolvedIds.includes(inc.id)
-            const isDetecting = inc.detecting
-            const effectiveSeverity = incidentResolved ? "resolved" : inc.severity
-            const effectiveStatus = incidentResolved ? "resolved" : isDetecting ? "detecting" : inc.status
-            const cfg = severityConfig[effectiveSeverity as keyof typeof severityConfig] ?? severityConfig.medium
+          {incidents.map((inc) => {
+            const cfg = severityConfig[inc.severity as keyof typeof severityConfig] ?? severityConfig.medium
+            const affected = inc.affectedUsers ?? 0
             return (
               <FadeIn key={inc.id}>
                 <Link
@@ -224,22 +151,16 @@ export function IncidentAlerts() {
                   {/* Left: severity indicator */}
                   <div className="flex items-center gap-3 min-w-0 flex-1">
                     <div className="relative shrink-0">
-                      {incidentResolved ? (
-                        <CheckCircle2 className={`w-4 h-4 ${cfg.text}`} />
-                      ) : (
-                        <>
-                          <AlertTriangle className={`w-4 h-4 ${cfg.text}`} />
-                          {inc.severity === "critical" && !isDetecting && (
-                            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[var(--neon-red)] animate-ping" />
-                          )}
-                        </>
+                      <AlertTriangle className={`w-4 h-4 ${cfg.text}`} />
+                      {inc.severity === "critical" && (
+                        <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[var(--neon-red)] animate-ping" />
                       )}
                     </div>
 
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className={`text-[10px] font-mono font-bold border px-1.5 py-0.5 rounded ${cfg.badge}`}>
-                          {incidentResolved ? "RESOLVED" : inc.severity.toUpperCase()}
+                          {inc.severity.toUpperCase()}
                         </span>
                         <span className="text-[10px] font-mono text-muted-foreground">{inc.id}</span>
                       </div>
@@ -249,12 +170,12 @@ export function IncidentAlerts() {
                           <Zap className="w-2.5 h-2.5" /> {inc.service}
                         </span>
                         <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                          <Clock className="w-2.5 h-2.5" /> {inc.started}
+                          <Clock className="w-2.5 h-2.5" /> {agoLabel(inc.startedAt)}
                         </span>
-                        {inc.affectedUsers > 0 && (
+                        {affected > 0 && (
                           <span className="text-[10px] text-muted-foreground flex items-center gap-1">
                             <Users className="w-2.5 h-2.5" />
-                            {inc.affectedUsers.toLocaleString()} {inc.impactLabel ?? "users affected"}
+                            {affected.toLocaleString()} affected
                           </span>
                         )}
                       </div>
@@ -264,8 +185,8 @@ export function IncidentAlerts() {
                   {/* Status badge */}
                   <div className="flex items-center gap-2 shrink-0">
                     <div className={`flex items-center gap-1.5 text-[10px] font-mono font-semibold ${cfg.text}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot} ${incidentResolved ? "" : "animate-pulse"}`} />
-                      {statusLabel[effectiveStatus]}
+                      <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot} animate-pulse`} />
+                      {statusLabel[inc.status] ?? inc.status.toUpperCase()}
                     </div>
                   </div>
                 </Link>

@@ -10,8 +10,8 @@ export default defineConfig({
     // (jsdom + Testing Library) arrive with the Settings UI milestone (M10).
     environment: "node",
     globals: true,
-    // Seeding the file store (buildSeedIncidents) generates a large history; give
-    // the store characterization tests ample headroom.
+    // Some store/eval characterization tests do real file I/O; give them ample
+    // headroom.
     testTimeout: 30000,
     include: ["**/*.{test,spec}.{ts,tsx}"],
     // Exclude nested node_modules (the demo micro-services vendor their own test
