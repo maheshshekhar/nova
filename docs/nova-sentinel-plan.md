@@ -170,8 +170,13 @@ domain:
 - [ ] Retire the custom `nova/metrics-collector` + its `url:` config line once
       Sentinel is the detection backbone.
 
-### B4. Tier 2 — Log signals by *anomaly*, not keyword  🚧
-- [ ] Continuous log tail (Loki `tail` / k8s stream) into a rolling window.
+### B4. Tier 2 — Log signals by *anomaly*, not keyword  ✅
+- [x] Continuous log tail: the runtime (`lib/sentinel/run.ts`) follows the logs of
+      in-scope pods via the Kubernetes log API (one follow-stream per container,
+      started on Running, aborted on delete; only new logs via `sinceSeconds` so
+      history never opens incidents). `parseLogLine` (`lib/sentinel/logs/parse.ts`)
+      normalizes JSON + plain-text lines; `SentinelEngine.onLog` feeds them to the
+      analyzer → correlator. `SENTINEL_LOGS=false` disables it; RBAC adds `pods/log`.
 - [x] **Log-template clustering** (Drain-style) → **novelty** detection
       (`lib/sentinel/logs/template.ts`): `templatize()` masks variable tokens
       (numbers, UUIDs, IPs, timestamps, hex, quoted strings); `LogTemplateMiner`
@@ -192,9 +197,11 @@ domain:
       same `Signal`s the Correlator consumes (signatures + novelty). Opportunistic
       `level` field is accepted, never required.
 - [x] Tests: templatize masking, novelty warm-up/eviction, signature matches
-      across formats + false-positive guards, analyzer signals
-      (`lib/sentinel/logs/analyzer.test.ts`). 470 tests green.
-- [ ] Log-tail runtime wiring into the Sentinel engine + `detection.logs` config. *(next)*
+      across formats + false-positive guards, analyzer signals, rate spikes,
+      log-line parsing, and engine `onLog` incident creation. 488 tests green.
+- [x] Log-tail runtime wiring into the Sentinel engine (env-driven; the typed
+      `detection.logs` config block is folded into B6's `detection:` schema).
+      Log signal kinds mapped to failure types in `incident.ts`.
 
 ### B5. Tier 3 — Domain + business + absence signals  ⬜
 - [ ] Use **Domain Pack** `impactSignal` patterns as declared business signals

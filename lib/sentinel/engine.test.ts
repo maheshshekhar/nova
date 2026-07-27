@@ -96,3 +96,35 @@ describe("SentinelEngine", () => {
     expect(sink.posted).toHaveLength(0)
   })
 })
+
+describe("SentinelEngine.onLog", () => {
+  it("opens an incident from a fatal log signature", async () => {
+    const sink = collectingSink()
+    const engine = new SentinelEngine({ sink })
+    await engine.onLog({ service: "checkout", namespace: "prod", message: "panic: runtime error: invalid memory address", pod: "checkout-x" })
+    expect(sink.posted).toHaveLength(1)
+    expect(sink.posted[0].labels).toMatchObject({ service: "checkout", severity: "critical", failure_type: "bad-deploy" })
+  })
+
+  it("maps a DB-pool log signature to the db-pool-exhaustion failure type", async () => {
+    const sink = collectingSink()
+    const engine = new SentinelEngine({ sink })
+    await engine.onLog({ service: "orders", message: "FATAL: remaining connection slots are reserved" })
+    expect(sink.posted[0]?.labels.failure_type).toBe("db-pool-exhaustion")
+  })
+
+  it("ordinary log lines produce no incident", async () => {
+    const sink = collectingSink()
+    const engine = new SentinelEngine({ sink })
+    await engine.onLog({ service: "checkout", message: "GET /health 200 OK" })
+    expect(sink.posted).toHaveLength(0)
+  })
+
+  it("dry-run does not post log-derived incidents", async () => {
+    const sink = collectingSink()
+    const engine = new SentinelEngine({ sink, dryRun: true, logger: vi.fn() })
+    await engine.onLog({ service: "checkout", message: "panic: boom" })
+    expect(sink.posted).toHaveLength(0)
+  })
+})
+
