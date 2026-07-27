@@ -13,37 +13,29 @@ import { useStandaloneRealMetrics } from "@/hooks/use-real-metrics"
 import { MetricsLiveContext } from "@/lib/metrics-live-context"
 import {
   ERROR_KEY,
-  LATENCY_KEY,
   advanceErrorSeries,
-  advanceLatencySeries,
   loadStore,
   saveStore,
   seedErrorSeries,
-  seedLatencySeries,
   type ErrorPoint,
-  type LatencyPoint,
 } from "@/lib/metrics-series"
 
 export function MetricsLiveProvider({ children }: { children: ReactNode }) {
   // The one and only metrics poll for the dashboard.
   const realMetrics = useStandaloneRealMetrics(3000, true)
 
-  // Rolling series, seeded from localStorage (survives reload) or a healthy
+  // Rolling error series, seeded from localStorage (survives reload) or a clean
   // baseline. Living in this provider (mounted in the root layout) means the
-  // series also survive client-side navigation between tabs.
+  // series also survives client-side navigation between tabs.
   const [errorSeries, setErrorSeries] = useState<ErrorPoint[]>(
     () => loadStore<ErrorPoint>(ERROR_KEY) ?? seedErrorSeries()
-  )
-  const [latencySeries, setLatencySeries] = useState<LatencyPoint[]>(
-    () => loadStore<LatencyPoint>(LATENCY_KEY) ?? seedLatencySeries()
   )
   const lastTsRef = useRef<number | null>(null)
 
   useEffect(() => {
     // Advance the live series whenever the collector is reachable. The series math
-    // decays toward zero when no app service is present, so the charts + tiles fall
-    // back to 0 on an infra-only cluster (or when the app namespace is removed) and
-    // ramp back up once app services are serving traffic again.
+    // decays toward zero when nothing is erroring, so the chart falls back to 0 on
+    // a quiet cluster and ramps up once services report errors again.
     if (!realMetrics.available) return
     // Advance exactly once per new collector sample (dedupe on lastUpdated so a
     // re-render without fresh data never double-advances the window).
@@ -56,16 +48,11 @@ export function MetricsLiveProvider({ children }: { children: ReactNode }) {
       saveStore(ERROR_KEY, next)
       return next
     })
-    setLatencySeries((prev) => {
-      const next = advanceLatencySeries(prev, realMetrics.services)
-      saveStore(LATENCY_KEY, next)
-      return next
-    })
   }, [realMetrics])
 
   const value = useMemo(
-    () => ({ realMetrics, errorSeries, latencySeries }),
-    [realMetrics, errorSeries, latencySeries]
+    () => ({ realMetrics, errorSeries }),
+    [realMetrics, errorSeries]
   )
 
   return <MetricsLiveContext.Provider value={value}>{children}</MetricsLiveContext.Provider>

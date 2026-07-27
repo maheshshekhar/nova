@@ -3,12 +3,15 @@
 # my-prometheus-kube-prometheus-{prometheus,alertmanager}). Used only for:
 #   • Prometheus — additive metrics source (the app still reads metrics-collector).
 #   • Alertmanager — receives Loki-ruler alerts and webhooks Nova's /api/alerts.
-# Grafana is disabled (Nova runs its own). The stack's default Kubernetes alert
-# rules are disabled so KinD control-plane false-positives never webhook spurious
-# incidents into Nova; only alerts carrying a `service` label (from the Loki ruler)
-# are routed to the nova receiver.
+# This stack is the Custom Payment demo's OWN observability (Nova ships none):
+#   • Prometheus — the demo's metrics source.
+#   • Alertmanager — receives Loki-ruler alerts and webhooks the Nova dashboard.
+#   • Grafana — the demo's own dashboards (Nova is a separate product UI).
+# The stack's default Kubernetes alert rules are disabled so KinD control-plane
+# false-positives never webhook spurious incidents into Nova; only alerts
+# carrying a `service` label (from the Loki ruler) are routed to the nova receiver.
 grafana:
-  enabled: false
+  enabled: true
 
 defaultRules:
   create: false
@@ -84,5 +87,7 @@ alertmanager:
       - name: "null"
       - name: nova
         webhook_configs:
-          - url: http://dashboard:3000/api/alerts
+          # Cross-namespace FQDN: the Nova dashboard lives in nova-monitoring,
+          # this Alertmanager in payment-monitoring.
+          - url: http://dashboard.nova-monitoring:3000/api/alerts
             send_resolved: false

@@ -1,9 +1,9 @@
 # ── Fluent Bit (fluent/fluent-bit chart, pinned 0.57.9) ───────────────────────
 # Node-level DaemonSet that tails every container's stdout/stderr, enriches it
-# with Kubernetes metadata, keeps the production / db-postgres / nova-monitoring
-# namespaces, and pushes lines to Loki with labels {job, namespace, app, pod}.
-# The label contract is what the Loki ruler rules and the Nova log adapter rely
-# on, so it is reproduced exactly from the old raw fluent-bit.yaml.
+# with Kubernetes metadata, keeps every non-system namespace, and pushes lines to
+# Loki with labels {job, namespace, app, pod}. The label contract is what the
+# Loki ruler rules and the Nova log adapter rely on, so it is reproduced exactly
+# from the old raw fluent-bit.yaml.
 fullnameOverride: fluent-bit
 
 # Run on every node, including the tainted control-plane node in KinD.
@@ -41,12 +41,13 @@ config:
         K8S-Logging.Parser  On
         K8S-Logging.Exclude On
 
-    # Keep application workloads (production), the database (db-postgres) and the
-    # observability stack (nova-monitoring) namespaces.
+    # Monitor ALL namespaces so Nova observes any workload (otel-demo,
+    # online-boutique, sock-shop, prometheus-example, production, db-postgres,
+    # nova-monitoring, …). Only drop the noisy Kubernetes system namespaces.
     [FILTER]
         Name             grep
         Match            kube.*
-        Regex            $kubernetes['namespace_name'] ^(production|db-postgres|nova-monitoring)$
+        Exclude          $kubernetes['namespace_name'] ^(kube-system|kube-public|kube-node-lease|local-path-storage)$
 
   outputs: |
     [OUTPUT]

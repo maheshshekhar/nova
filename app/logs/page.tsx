@@ -14,28 +14,32 @@ const logLevelColors: Record<string, { text: string; bg: string; border: string 
   DEBUG: { text: "text-muted-foreground", bg: "bg-secondary/30", border: "border-border/30" },
 }
 
-const serviceColors: Record<string, string> = {
-  "api-gateway": "text-[var(--neon-cyan)]",
-  "auth-service": "text-[var(--neon-blue)]",
-  "payment-service": "text-[var(--neon-red)]",
-  "config-service": "text-[var(--neon-purple,#a78bfa)]",
-  "transaction-service": "text-[var(--neon-green)]",
-  "notifications": "text-[var(--neon-green)]",
-  "search-service": "text-[var(--neon-yellow)]",
-  "user-profile": "text-[var(--neon-orange)]",
-  "media-service": "text-[var(--neon-orange)]",
-  "cache-layer": "text-[var(--neon-cyan)]",
+const servicePalette = [
+  "text-[var(--neon-cyan)]",
+  "text-[var(--neon-blue)]",
+  "text-[var(--neon-green)]",
+  "text-[var(--neon-orange)]",
+  "text-[var(--neon-yellow)]",
+  "text-[var(--neon-red)]",
+  "text-[var(--neon-purple,#a78bfa)]",
+]
+
+// Stable colour for any service, derived from its name (no hardcoded service
+// list) so every real workload that shows up in the stream gets a consistent tint.
+function serviceColor(name: string): string {
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
+  return servicePalette[h % servicePalette.length]
 }
 
 const allLevels = ["ERROR", "WARN", "INFO", "DEBUG"]
-// The real workloads whose logs Fluent Bit ships into Loki. Kept as a fixed list
-// so the service filter chips are stable even before the first live logs arrive.
-const allServices = ["payment-service", "config-service", "transaction-service"]
 
 export default function LogsPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedLevels, setSelectedLevels] = useState<Set<string>>(new Set(allLevels))
-  const [selectedServices, setSelectedServices] = useState<Set<string>>(new Set(allServices))
+  // Services the user has toggled OFF. Empty = every live service is shown, so the
+  // filter needs no hardcoded base list — chips come entirely from the real stream.
+  const [deselectedServices, setDeselectedServices] = useState<Set<string>>(new Set())
   const [isStreaming, setIsStreaming] = useState(true)
   const { currentIncidentId } = useLiveState()
 
@@ -98,17 +102,15 @@ export default function LogsPage() {
   const filteredLogs = useMemo(() => {
     return sourceLogs.filter((log) => {
       if (!selectedLevels.has(log.level)) return false
-      if (!selectedServices.has(log.service)) return false
+      if (deselectedServices.has(log.service)) return false
       if (searchQuery && !log.message.toLowerCase().includes(searchQuery.toLowerCase())) return false
       return true
     })
-  }, [searchQuery, selectedLevels, selectedServices, sourceLogs])
+  }, [searchQuery, selectedLevels, deselectedServices, sourceLogs])
 
-  // Service filter chips: the known real workloads plus any other service that
-  // shows up in the live stream. Using the fixed base keeps the chips stable even
-  // before the first logs arrive.
+  // Service filter chips come entirely from the live stream — no hardcoded base.
   const availableServices = useMemo(
-    () => Array.from(new Set([...allServices, ...sourceLogs.map((l) => l.service)])).sort(),
+    () => Array.from(new Set(sourceLogs.map((l) => l.service))).sort(),
     [sourceLogs]
   )
 
@@ -122,7 +124,7 @@ export default function LogsPage() {
   }
 
   const toggleService = (service: string) => {
-    setSelectedServices((prev) => {
+    setDeselectedServices((prev) => {
       const next = new Set(prev)
       if (next.has(service)) next.delete(service)
       else next.add(service)
@@ -215,14 +217,14 @@ export default function LogsPage() {
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Service:</span>
             {availableServices.map((service) => {
-              const active = selectedServices.has(service)
+              const active = !deselectedServices.has(service)
               return (
                 <button
                   key={service}
                   onClick={() => toggleService(service)}
                   className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors ${
                     active
-                      ? `${serviceColors[service] ?? "text-foreground"} bg-secondary/40 border-border/50`
+                      ? `${serviceColor(service)} bg-secondary/40 border-border/50`
                       : "text-muted-foreground/40 bg-secondary/20 border-border/20"
                   }`}
                 >
@@ -270,7 +272,7 @@ export default function LogsPage() {
                   <span className={`shrink-0 w-14 px-2 py-2 text-[10px] font-bold text-center border-r border-border/20 ${colors.text}`}>
                     {log.level}
                   </span>
-                  <span className={`shrink-0 w-32 px-2 py-2 text-[10px] border-r border-border/20 truncate ${serviceColors[log.service] ?? "text-foreground"}`}>
+                  <span className={`shrink-0 w-32 px-2 py-2 text-[10px] border-r border-border/20 truncate ${serviceColor(log.service)}`}>
                     {log.service}
                   </span>
                   <span className="flex-1 px-3 py-2 text-foreground/80 break-all leading-relaxed">

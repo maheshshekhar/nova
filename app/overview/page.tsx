@@ -4,7 +4,6 @@ import { StatsBar } from "@/components/dashboard/stats-bar"
 import { DeploymentCards } from "@/components/dashboard/deployment-cards"
 import { IncidentAlerts } from "@/components/dashboard/incident-alerts"
 import { ErrorRateChart } from "@/components/dashboard/metrics-charts"
-import { LatencyChart } from "@/components/dashboard/metrics-charts"
 import { ServiceHealthTable } from "@/components/dashboard/service-health-table"
 import { AiAnalysisPanel } from "@/components/dashboard/ai-analysis-panel"
 
@@ -21,10 +20,9 @@ export default function OverviewPage() {
         <DeploymentCards />
       </div>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Error rate (real) */}
+      <div className="grid grid-cols-1 gap-4">
         <ErrorRateChart />
-        <LatencyChart />
       </div>
 
       {/* AI Root Cause Analysis */}

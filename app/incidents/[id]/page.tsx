@@ -3,7 +3,6 @@
 import { use, useState, useEffect, useCallback } from "react"
 import Link from "next/link"
 import { ArrowLeft, AlertTriangle, Clock, Users, Zap, Terminal, ExternalLink, Brain, ShieldCheck, Sparkles, Check, CheckCircle2, Loader2, FileText, BookOpen, Play } from "lucide-react"
-import { aiAnalysis, incidentDetails, mockLogs, getIncidentDetails } from "@/lib/dashboard-data"
 import { useRealLogs } from "@/hooks/use-real-metrics"
 import { useLiveState } from "@/lib/live-state"
 import { RcaGeneratorButton } from "@/components/dashboard/rca-document-modal"
@@ -135,10 +134,10 @@ export default function IncidentDetailPage({ params }: { params: Promise<{ id: s
   const logService = record?.service ?? (isActiveIncident ? "payment-service" : undefined)
   const { logs: realLogs, available: logsAvailable } = useRealLogs(logService)
 
-  // The active incident keeps its live template (real-log overlay + recovery flow);
-  // every other incident renders from its persisted store record.
-  const template = getIncidentDetails(id)
-  const incident = isActiveIncident ? template : record ? recordToDetail(record) : null
+  // Every incident — active or archived — renders from its persisted store
+  // record; there is no static template. The active payment cascade record is
+  // created in the store by live-state when the real failure is detected.
+  const incident = record ? recordToDetail(record) : null
 
   // Resolved if: (active) marked resolved this run / archived; else the record's status.
   const resolved = isActiveIncident
@@ -175,8 +174,8 @@ export default function IncidentDetailPage({ params }: { params: Promise<{ id: s
   }, [id, markResolved, stabilize])
 
   if (!incident) {
-    // Still loading the record for a non-active incident.
-    if (!isActiveIncident && !recordLoaded) {
+    // Still loading the record.
+    if (!recordLoaded) {
       return (
         <main className="max-w-[1600px] mx-auto px-4 lg:px-6 py-6">
           <div className="card-glass rounded-lg p-8 flex items-center justify-center gap-2">
@@ -739,17 +738,7 @@ function AiRootCauseSection({
       return
     }
 
-    const related = incidentDetails["INC-2847"].relatedLogs.map(
-      (l) => `${l.timestamp} ${l.level} ${l.message}`
-    )
-    const paymentErrors = mockLogs
-      .filter((l) => l.service === "payment-service" && l.level === "ERROR")
-      .map((l) => `${l.timestamp} ${l.level} ${l.message}`)
-    const offlineImpact =
-      impactCount > 0
-        ? `Approximately ${impactCount.toLocaleString()} failed checkout requests (HTTP 503).`
-        : `Customer impact is being quantified.`
-    runAi([...related, ...paymentErrors], `${idLabel} ${offlineImpact}`, analyzeOpts)
+    // No live logs available — do not fabricate analysis from static data.
   }, [runAi, realLogs, logsAvailable, currentIncidentId, incidentStartedAt, impactCount])
 
   return (
@@ -828,20 +817,11 @@ function AiRootCauseSection({
 
       {aiState.status === "success" && (
         <>
-          {/* Signal correlation */}
-          <div className="mb-5 flex items-center gap-3">
-            <span className="text-[10px] font-mono font-semibold text-muted-foreground tracking-widest uppercase">Signals</span>
-            <span className="flex items-center gap-1.5 text-[10px] font-mono font-semibold px-2 py-1 rounded bg-[var(--neon-green)]/10 border border-[var(--neon-green)]/25 text-[var(--neon-green)]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--neon-green)]" />
-              {aiAnalysis.signalLabel}
-            </span>
-          </div>
-
           {/* Recommended Immediate Action */}
           <div className="mb-5">
             <span className="text-[10px] font-mono font-semibold text-muted-foreground tracking-widest uppercase">Recommended Immediate Action</span>
             <p className="text-sm text-foreground/90 mt-1 leading-relaxed">
-              Scale <code className="text-[var(--neon-cyan)] bg-[var(--neon-cyan)]/5 px-1 py-0.5 rounded text-xs">payment-service</code> to 6 replicas and stop the load-generator Job.
+              Follow the recommendations in the AI analysis above, then generate a recovery plan.
             </p>
           </div>
         </>

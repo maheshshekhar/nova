@@ -118,10 +118,33 @@ export const PersistenceConfigSchema = z
 export type PersistenceConfig = z.infer<typeof PersistenceConfigSchema>
 
 // ── Metrics ──────────────────────────────────────────────────────────────────
+// Semantic signal → PromQL. Each query must return an instant vector labelled by
+// `serviceLabel` (one series per service). Explicit queries here win over any
+// preset expanded by discovery (see docs/metrics-architecture-plan.md, Phase 3).
+export const MetricsSignalsSchema = z
+  .object({
+    errorRate: z.string().optional(),
+    latencyP50: z.string().optional(),
+    latencyP95: z.string().optional(),
+    latencyP99: z.string().optional(),
+    rps: z.string().optional(),
+  })
+  .passthrough()
+  .default({})
+export type MetricsSignals = z.infer<typeof MetricsSignalsSchema>
+
 export const MetricsConfigSchema = z
   .object({
     provider: z.enum(["prometheus", "http", "none"]).default("http"),
     url: z.string().optional(),
+    // Prometheus bearer token referenced by ENV VAR NAME (never inline).
+    authTokenEnv: z.string().optional(),
+    // Which Prometheus label identifies a "service" (app | service | destination_service_name…).
+    serviceLabel: z.string().default("service"),
+    // The semantic signal → PromQL map (prometheus provider only).
+    signals: MetricsSignalsSchema,
+    // Preset id recorded when a discovery-suggested exporter mapping is pinned (Phase 3).
+    preset: z.string().optional(),
   })
   .passthrough()
   .default({})

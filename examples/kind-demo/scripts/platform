@@ -1,0 +1,172 @@
+#!/bin/bash
+set -e
+
+# ─────────────────────────────────────────────────────────────────────────────
+# platform — deploy ONLY the Nova dashboard onto a running cluster.
+#
+# Nova is the product: a single AI dashboard that plugs into whatever
+# observability a workload already exposes. The platform therefore ships nothing
+# but Nova itself — no Loki, Prometheus, Grafana, Fluent Bit or metrics-server.
+# Each demo workload brings its OWN stack (logs, metrics, Grafana, alert rules);
+# you then point Nova at that workload's backends (deploy-reference-apps.sh does
+# this automatically for the bundled Custom Payment System).
+#
+# Invoked automatically at the end of `cluster`; re-runnable to repair/redeploy.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Colors ────────────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+log()     { echo -e "${CYAN}[PLATFORM]${NC} $1"; }
+success() { echo -e "${GREEN}[OK]${NC} $1"; }
+warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error()   { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+
+# Run from the project root so relative k8s/... and Dockerfile paths resolve.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+cd "$PROJECT_ROOT"
+
+CLUSTER_NAME="nova-platform"
+MON_NAMESPACE="nova-monitoring"
+K8S="examples/kind-demo/k8s"
+
+# ── Prerequisites ─────────────────────────────────────────────────────────────
+command -v kubectl >/dev/null 2>&1 || error "kubectl not found. Run: brew install kubectl"
+command -v docker >/dev/null 2>&1  || error "Docker not found. Install Docker Desktop."
+kubectl cluster-info >/dev/null 2>&1 || error "No reachable cluster. Run ./examples/kind-demo/scripts/cluster first."
+
+echo ""
+echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
+echo -e "${CYAN}║   Nova dashboard (the product)                ║${NC}"
+echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
+echo ""
+log "Deploying Nova dashboard → namespace '${MON_NAMESPACE}'..."
+
+kubectl get namespace "$MON_NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$MON_NAMESPACE"
+
+# AI keys secret (dashboard reads these; optional if you have no keys yet).
+if [ -f "$K8S/secret.yaml" ]; then
+  kubectl apply -f "$K8S/secret.yaml"
+  success "AI keys secret applied from $K8S/secret.yaml"
+else
+  warn "No $K8S/secret.yaml — creating an empty ai-keys secret"
+  warn "  cp $K8S/secret.yaml.template $K8S/secret.yaml, add keys, then kubectl apply -f it"
+  kubectl create secret generic ai-keys -n "$MON_NAMESPACE" \
+    --from-literal=OPENROUTER_API_KEY="" --from-literal=ANTHROPIC_API_KEY="" \
+    --dry-run=client -o yaml | kubectl apply -f -
+fi
+
+# Nova dashboard image — build only if missing (docker rmi to force a rebuild).
+if docker image inspect "nova/dashboard:latest" >/dev/null 2>&1; then
+  warn "nova/dashboard:latest already built — skipping (docker rmi nova/dashboard:latest to rebuild)"
+else
+  log "Building nova/dashboard:latest..."
+  docker build -t "nova/dashboard:latest" -f "Dockerfile" "." || error "Build failed: nova/dashboard:latest"
+  success "nova/dashboard:latest built"
+fi
+
+if docker exec "${CLUSTER_NAME}-control-plane" crictl images 2>/dev/null | grep -q "nova/dashboard"; then
+  warn "nova/dashboard:latest already in cluster — skipping load"
+else
+  log "Loading nova/dashboard:latest into KinD..."
+  kind load docker-image "nova/dashboard:latest" --name "$CLUSTER_NAME" || error "kind load failed"
+  success "nova/dashboard:latest loaded"
+fi
+
+# ── metrics-collector (cluster-wide pod/deployment reader) ────────────────────
+# Nova ships no metrics backend of its own, but the dashboard still needs SOME
+# source so it shows service health/CPU/mem for WHATEVER workload is running
+# (OTel demo, Boutique, Sock Shop, …). The collector reads pods, namespaces and
+# deployments cluster-wide, so it works for every demo out of the box. Demos
+# with their own richer stack (e.g. Custom Payment System) can still re-point
+# Nova at their backends via deploy-reference-apps.sh.
+if docker image inspect "nova/metrics-collector:latest" >/dev/null 2>&1; then
+  warn "nova/metrics-collector:latest already built — skipping (docker rmi nova/metrics-collector:latest to rebuild)"
+else
+  log "Building nova/metrics-collector:latest..."
+  docker build -t "nova/metrics-collector:latest" \
+    -f "examples/kind-demo/metrics-collector/Dockerfile" \
+    "examples/kind-demo/metrics-collector" || error "Build failed: nova/metrics-collector:latest"
+  success "nova/metrics-collector:latest built"
+fi
+
+if docker exec "${CLUSTER_NAME}-control-plane" crictl images 2>/dev/null | grep -q "nova/metrics-collector"; then
+  warn "nova/metrics-collector:latest already in cluster — skipping load"
+else
+  log "Loading nova/metrics-collector:latest into KinD..."
+  kind load docker-image "nova/metrics-collector:latest" --name "$CLUSTER_NAME" || error "kind load failed"
+  success "nova/metrics-collector:latest loaded"
+fi
+
+# metrics-server (cluster singleton) — provides pod CPU/memory to the collector.
+# Idempotent: re-applying is a no-op if it's already installed.
+log "Installing metrics-server (pod CPU/memory source)..."
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+kubectl patch deployment metrics-server -n kube-system --type=json \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' \
+  2>/dev/null || true
+
+kubectl apply -f "$K8S/dashboard-rbac.yaml"   # dashboard-sa (nova-monitoring)
+kubectl apply -f "$K8S/metrics-collector.yaml" # cluster-wide metrics backend for Nova
+kubectl apply -f "$K8S/nova-config.yaml"       # all-namespace log scope + backend URLs
+kubectl apply -f "$K8S/dashboard.yaml"
+
+log "Waiting for the dashboard to be ready..."
+kubectl wait --for=condition=available deployment/dashboard -n "$MON_NAMESPACE" --timeout=180s \
+  || warn "dashboard not ready yet"
+kubectl rollout status deployment/metrics-collector -n "$MON_NAMESPACE" --timeout=120s \
+  || warn "metrics-collector not ready yet"
+
+# ── Serve: background port-forward on :3000 (+ optional trusted https://nova) ──
+log "Starting background port-forward (dashboard:3000)..."
+pkill -f "port-forward service/dashboard" 2>/dev/null || true
+nohup kubectl port-forward service/dashboard 3000:3000 -n "$MON_NAMESPACE" \
+  > /tmp/nova-portforward.log 2>&1 & disown 2>/dev/null || true
+
+for i in $(seq 1 15); do
+  curl -sf -o /dev/null "http://localhost:3000/overview" && { success "Dashboard: http://localhost:3000/overview"; break; }
+  [ "$i" -eq 15 ] && warn "Dashboard not confirmed on :3000 yet — check /tmp/nova-portforward.log"
+  sleep 1
+done
+
+# Optional: trusted https://nova (mkcert + Caddy). Nova is the only proxied host.
+if command -v mkcert >/dev/null 2>&1 && command -v caddy >/dev/null 2>&1; then
+  log "Setting up trusted HTTPS (mkcert + Caddy)..."
+  if ! grep -qE "^[^#]*[[:space:]]nova([[:space:]]|$)" /etc/hosts 2>/dev/null; then
+    warn "Add a hosts entry to reach https://nova:"
+    warn "  sudo sh -c 'echo \"127.0.0.1    nova\" >> /etc/hosts'"
+  fi
+  mkcert -install >/dev/null 2>&1 || warn "mkcert -install failed — cert may not be trusted"
+  mkdir -p "${PROJECT_ROOT}/certs"
+  if [ ! -f "${PROJECT_ROOT}/certs/nova.pem" ] || [ ! -f "${PROJECT_ROOT}/certs/nova-key.pem" ]; then
+    mkcert -cert-file "${PROJECT_ROOT}/certs/nova.pem" \
+           -key-file "${PROJECT_ROOT}/certs/nova-key.pem" nova \
+      && success "Cert generated: certs/nova.pem"
+  fi
+  # Nova-only reverse-proxy config (regenerated if missing — certs/ is gitignored).
+  if [ ! -f "${PROJECT_ROOT}/certs/Caddyfile" ]; then
+    cat > "${PROJECT_ROOT}/certs/Caddyfile" <<'CADDY'
+nova {
+	tls certs/nova.pem certs/nova-key.pem
+	reverse_proxy localhost:3000
+}
+CADDY
+  fi
+  (cd "$PROJECT_ROOT" && sudo caddy start --config certs/Caddyfile 2>/dev/null) \
+    && success "Serving https://nova" \
+    || warn "Caddy did not start — run: sudo caddy start --config certs/Caddyfile"
+fi
+
+echo ""
+echo -e "${GREEN}╔══════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║  Nova dashboard ready — the product is up     ║${NC}"
+echo -e "${GREEN}╚══════════════════════════════════════════════╝${NC}"
+echo ""
+echo "Deploy a workload (each brings its own observability stack):"
+echo "  ./examples/kind-demo/scripts/deploy-reference-apps.sh"
+echo ""

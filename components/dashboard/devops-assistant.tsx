@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react"
 import { Bot, Send, Loader2, Sparkles, X, MessageSquare } from "lucide-react"
 import { useLiveState } from "@/lib/live-state"
-import { PRIMARY_INCIDENT } from "@/lib/dashboard-data"
 import { useRealMetrics, useRealLogs } from "@/hooks/use-real-metrics"
 import { getStoredRcas } from "@/components/dashboard/rca-document-modal"
 import { RUNBOOKS } from "@/lib/runbooks"
@@ -79,7 +78,7 @@ function prettifyModel(model: string): string {
 }
 
 export function DevOpsAssistant() {
-  const { phase, currentIncidentId, pastIncidents, incidentStartedAt, impactCount } = useLiveState()
+  const { phase, pastIncidents } = useLiveState()
   const realMetrics = useRealMetrics()
   const { logs: realLogs } = useRealLogs()
   const [open, setOpen] = useState(false)
@@ -128,23 +127,25 @@ export function DevOpsAssistant() {
   const buildContext = (): string => {
     const now = new Date()
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+    // The active incident (if any) comes from the REAL store archive, not a
+    // hardcoded literal — so the assistant describes whatever is actually open.
+    const activeIncident = archive.find((i) => i.status && i.status !== "resolved") ?? null
     return renderContext(defaultContextProviders, {
       now,
       timezone: tz,
       phase,
       fmt,
-      active:
-        phase !== "healthy"
-          ? {
-              id: currentIncidentId,
-              service: PRIMARY_INCIDENT.service,
-              severity: PRIMARY_INCIDENT.severity,
-              title: PRIMARY_INCIDENT.title,
-              failureType: "db-pool-exhaustion",
-              startedAt: incidentStartedAt ?? null,
-              users: impactCount,
-            }
-          : null,
+      active: activeIncident
+        ? {
+            id: activeIncident.id,
+            service: activeIncident.service,
+            severity: activeIncident.severity,
+            title: activeIncident.title,
+            failureType: activeIncident.failureType,
+            startedAt: activeIncident.startedAt,
+            users: activeIncident.affectedUsers,
+          }
+        : null,
       past: pastIncidents.map((p) => ({
         id: p.id,
         service: p.service,
@@ -152,10 +153,10 @@ export function DevOpsAssistant() {
         resolvedAt: p.resolvedAt,
       })),
       pastDefaults: {
-        severity: PRIMARY_INCIDENT.severity,
-        users: PRIMARY_INCIDENT.affectedUsers,
-        title: PRIMARY_INCIDENT.title,
-        failureType: "db-pool-exhaustion",
+        severity: "high",
+        users: 0,
+        title: "Incident",
+        failureType: "Unknown",
       },
       archive,
       storedRcas: getStoredRcas(),
@@ -166,9 +167,9 @@ export function DevOpsAssistant() {
         namespaces: realMetrics.namespaces,
         services: realMetrics.services,
       },
-      // Log-block label is data-driven (the incident's service), not a hardcoded
-      // domain literal — the engine has no payment-service string baked in.
-      logs: { label: PRIMARY_INCIDENT.service, entries: realLogs },
+      // Log-block label is data-driven (the active incident's service), not a
+      // hardcoded domain literal.
+      logs: { label: activeIncident?.service ?? "app", entries: realLogs },
     })
   }
 

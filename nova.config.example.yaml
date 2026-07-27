@@ -50,6 +50,18 @@ persistence:
 metrics:
   provider: http                # prometheus | http | none
   url: ${METRICS_COLLECTOR_URL:-http://metrics-collector:3001}
+  # ── Real metrics from your Prometheus (provider: prometheus) ────────────────
+  # Nova is only a PromQL *client* — your apps expose /metrics and Prometheus
+  # scrapes them (ServiceMonitor/PodMonitor or scrape_configs). Nova never
+  # fabricates a signal: only the queries you declare below are charted.
+  # provider: prometheus
+  # url: ${PROMETHEUS_URL:-http://prometheus.monitoring:9090}
+  # authTokenEnv: PROM_TOKEN          # optional bearer, by ENV VAR NAME
+  # serviceLabel: service             # label that identifies a service (app | service | destination_service_name…)
+  # signals:                          # semantic signal → PromQL (one series per service)
+  #   errorRate:  'sum by (service)(rate(http_requests_total{code=~"5.."}[5m])) / sum by (service)(rate(http_requests_total[5m])) * 100'
+  #   latencyP95: 'histogram_quantile(0.95, sum by (service,le)(rate(http_request_duration_seconds_bucket[5m])))'
+  #   rps:        'sum by (service)(rate(http_requests_total[5m]))'
 
 # ── Detection & impact (generalises the checkout/503 counter) ────────────────
 detection:

@@ -33,6 +33,8 @@ spec:
           ports:
             - containerPort: 3000
           env:
+            - name: NOVA_CONFIG
+              value: "/config/nova.config.yaml"
             - name: METRICS_COLLECTOR_URL
               value: "http://metrics-collector:3001"
             - name: LOKI_URL
@@ -71,6 +73,9 @@ spec:
           volumeMounts:
             - name: incident-data
               mountPath: /data
+            - name: nova-config
+              mountPath: /config
+              readOnly: true
       volumes:
         # hostPath resolves to the KinD node's /mnt/dashboard-data, which each node
         # bind-mounts from the host ./data folder (see scripts/cluster).
@@ -80,6 +85,10 @@ spec:
           hostPath:
             path: /mnt/dashboard-data
             type: DirectoryOrCreate
+        # nova.config.yaml (all-namespace log scope) — see k8s/nova-config.yaml.
+        - name: nova-config
+          configMap:
+            name: nova-config
 
 ---
 apiVersion: v1

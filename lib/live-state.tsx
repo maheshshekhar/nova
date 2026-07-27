@@ -4,9 +4,19 @@ import { createContext, useContext, useState, useCallback, useRef, useEffect, us
 import { useAiAnalysis, type AnalysisState } from "@/hooks/use-ai-analysis"
 import { useRealLogs } from "@/hooks/use-real-metrics"
 import { countCheckoutFailures } from "@/lib/log-selection"
-import { PRIMARY_INCIDENT } from "@/lib/dashboard-data"
 
 export type LivePhase = "healthy" | "degrading" | "incident"
+
+// Metadata for the incident the real cluster poll records when it detects the
+// monitored service failing under load. Describes the REAL detected failure
+// (payment-service connection-pool exhaustion in the bundled demo) — it is not
+// seeded or simulated data.
+const DETECTED_INCIDENT = {
+  title: "Elevated 5xx errors on /api/checkout",
+  service: "payment-service",
+  severity: "critical" as const,
+  failureType: "db-pool-exhaustion" as const,
+}
 
 export interface CapturedLog {
   timestamp: string
@@ -25,7 +35,6 @@ export interface PastIncident {
 
 interface LiveState {
   phase: LivePhase
-  secondsElapsed: number
   triggerFailure: () => void
   reset: () => void
   stabilize: () => void
@@ -70,7 +79,6 @@ interface LiveState {
 
 const LiveStateContext = createContext<LiveState>({
   phase: "healthy",
-  secondsElapsed: 0,
   triggerFailure: () => {},
   reset: () => {},
   stabilize: () => {},
@@ -93,9 +101,6 @@ const LiveStateContext = createContext<LiveState>({
   pastIncidents: []
 })
 
-// How long the "degrading" phase may last before we force the full "incident"
-// view, in case the collector only ever reports "degraded" and never "critical".
-const DEGRADING_FALLBACK_SECONDS = 30
 // Poll cadence for the real cluster status (matches the metrics collector / hooks).
 const POLL_INTERVAL_MS = 3000
 
@@ -112,11 +117,11 @@ function persistCreate(startedAt: number): Promise<string | null> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      title: PRIMARY_INCIDENT.title,
-      service: PRIMARY_INCIDENT.service,
-      severity: PRIMARY_INCIDENT.severity,
+      title: DETECTED_INCIDENT.title,
+      service: DETECTED_INCIDENT.service,
+      severity: DETECTED_INCIDENT.severity,
       status: "investigating",
-      failureType: "db-pool-exhaustion",
+      failureType: DETECTED_INCIDENT.failureType,
       startedAt,
       // Seed impact at 0, not the static PRIMARY_INCIDENT figure: the real count
       // is the live checkout-503 tally (liveImpact) which accumulates over the
@@ -143,7 +148,6 @@ function persistResolve(id: string, impact?: number): void {
 
 export function LiveStateProvider({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState<LivePhase>("healthy")
-  const [secondsElapsed, setSecondsElapsed] = useState(0)
   const [resolvedIncidents, setResolvedIncidents] = useState<string[]>([])
   // Recovery-plan UI state (persists across navigation while the provider stays mounted).
   const [recoveryPlanOpen, setRecoveryPlanOpen] = useState(false)
@@ -180,33 +184,8 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
   const incidentNumberRef = useRef(2846)
   const currentIncidentIdRef = useRef("")
   const startedAtRef = useRef<number | null>(null)
-  const tickRef = useRef<NodeJS.Timeout | null>(null)
-  const elapsedRef = useRef(0)
   // Latest phase, readable inside the async poll without re-subscribing it.
   const phaseRef = useRef<LivePhase>("healthy")
-
-  const clearTick = useCallback(() => {
-    if (tickRef.current) {
-      clearInterval(tickRef.current)
-      tickRef.current = null
-    }
-  }, [])
-
-  // The seconds counter drives the ramp visuals (charts / stats / table). It runs
-  // for the whole time the system is non-healthy and resets on recovery.
-  const startTick = useCallback(() => {
-    if (tickRef.current) return
-    tickRef.current = setInterval(() => {
-      elapsedRef.current += 1
-      setSecondsElapsed(elapsedRef.current)
-      // Fallback escalation: if we've been degrading long enough without the
-      // cluster reporting "critical", promote to the full incident view anyway.
-      if (phaseRef.current === "degrading" && elapsedRef.current >= DEGRADING_FALLBACK_SECONDS) {
-        phaseRef.current = "incident"
-        setPhase("incident")
-      }
-    }, 1000)
-  }, [])
 
   // Start a fresh incident run: archive the previous incident into history,
   // mint the next incrementing id, and reset all per-run state.
@@ -218,8 +197,8 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
         [
           {
             id: prevId,
-            title: PRIMARY_INCIDENT.title,
-            service: PRIMARY_INCIDENT.service,
+            title: DETECTED_INCIDENT.title,
+            service: DETECTED_INCIDENT.service,
             startedAt: prevStart,
             resolvedAt: Date.now(),
           },
@@ -245,8 +224,6 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
     setRecoveryChecks([])
     setCapturedLogs([])
     resetAnalysis()
-    elapsedRef.current = 0
-    setSecondsElapsed(0)
 
     // Persist to the store, which assigns the authoritative id (max+1). Reconcile
     // our currentIncidentId with it so a config/transaction incident injected after
@@ -266,31 +243,26 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
     beginIncident()
     phaseRef.current = "degrading"
     setPhase("degrading")
-    startTick()
-  }, [beginIncident, startTick])
+  }, [beginIncident])
 
   const goIncident = useCallback(() => {
     if (phaseRef.current === "incident") return
     if (phaseRef.current === "healthy") {
       // Jumped straight to critical — initialise the run first.
       beginIncident()
-      startTick()
     }
     phaseRef.current = "incident"
     setPhase("incident")
-  }, [beginIncident, startTick])
+  }, [beginIncident])
 
   const goHealthy = useCallback(() => {
-    clearTick()
-    elapsedRef.current = 0
-    setSecondsElapsed(0)
     phaseRef.current = "healthy"
     setPhase("healthy")
     // Freeze the canonical impact count at recovery so it stops growing.
     setFrozenImpact((f) => f ?? liveImpactRef.current)
     // Keep any resolved-incident record (and its RCA document) after recovery;
     // a fresh run (goDegrading) or a full page load clears it.
-  }, [clearTick])
+  }, [])
 
   // Kept on the context for backwards compatibility with pages that still import
   // them; the phase is now driven entirely by the real cluster poll below.
@@ -383,8 +355,6 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
     }
   }, [goDegrading, goIncident])
 
-  useEffect(() => () => clearTick(), [clearTick])
-
   // On mount, sync the incident numbering with the persisted store so a fresh
   // page load continues the INC-#### series (max + 1) instead of always restarting
   // at INC-2847. Runs once; the live inject then mints the next number.
@@ -410,7 +380,6 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
     <LiveStateContext.Provider
       value={{
         phase,
-        secondsElapsed,
         triggerFailure,
         reset,
         stabilize,

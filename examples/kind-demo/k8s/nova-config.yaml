@@ -1,0 +1,33 @@
+# ── Nova runtime config (mounted into the dashboard) ──────────────────────────
+# Provides a nova.config.yaml so Nova reads logs from EVERY namespace instead of
+# the built-in `production`-only default. Only the log scope is overridden here;
+# every other section falls back to its schema default (zod deep-fills partial
+# configs). The dashboard mounts this at /config/nova.config.yaml and points
+# $NOVA_CONFIG at it (see dashboard.yaml).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nova-config
+  namespace: nova-monitoring
+  labels:
+    app: dashboard
+data:
+  nova.config.yaml: |
+    logs:
+      provider: loki
+      url: ${LOKI_URL:-http://loki:3100}
+      # Watch all namespaces: `namespace=~".+"` matches every stream Fluent Bit
+      # ships. The load-generator remains excluded as pure synthetic noise.
+      scope:
+        include:
+          - { namespace: { regex: ".+" } }
+        exclude:
+          - { service: load-generator }
+    # Start with a REAL, empty incident store — no seeded demo history. Incidents
+    # appear only when they actually happen (inject scripts / alert webhooks).
+    persistence:
+      provider: file
+      seed: none
+    metrics:
+      provider: http
+      url: ${METRICS_COLLECTOR_URL:-http://metrics-collector:3001}

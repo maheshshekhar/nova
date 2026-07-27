@@ -1,0 +1,61 @@
+# OpenTelemetry Demo (Astronomy Shop) — KinD resource overrides
+#
+# The upstream chart ships very tight memory limits that assume a well-resourced
+# cluster. On a local KinD cluster under the demo's own load-generator, three
+# containers exceed their limits and get OOMKilled (exit code 137):
+#
+#   product-catalog  20Mi  → OOMKilled
+#   checkout         20Mi  → OOMKilled
+#   flagd-ui (250Mi) sidecar in the flagd pod → OOMKilled
+#
+# This file raises those limits (and the matching Go soft limit GOMEMLIMIT for
+# the Go services) to give headroom. Values are additively merged over the
+# chart defaults via `helm upgrade --install -f`.
+
+components:
+  # Go service — bump limit and keep GOMEMLIMIT just below it so the Go GC
+  # backs off before the kernel OOM-kills the container.
+  checkout:
+    resources:
+      limits:
+        memory: 64Mi
+    envOverrides:
+      - name: GOMEMLIMIT
+        value: 56MiB
+
+  # Go service — same treatment as checkout.
+  product-catalog:
+    resources:
+      limits:
+        memory: 64Mi
+    envOverrides:
+      - name: GOMEMLIMIT
+        value: 56MiB
+
+  # flagd itself (75Mi) is fine; only the flagd-ui sidecar OOMs. Overriding a
+  # sidecar requires redefining the whole sidecarContainers list, so this mirrors
+  # the chart's flagd-ui definition with a raised memory limit (250Mi → 500Mi).
+  flagd:
+    sidecarContainers:
+      - name: flagd-ui
+        useDefault:
+          env: true
+        service:
+          port: 4000
+        env:
+          - name: FLAGD_METRICS_EXPORTER
+            value: otel
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://$(OTEL_COLLECTOR_NAME):4318
+          - name: FLAGD_UI_PORT
+            value: "4000"
+          - name: SECRET_KEY_BASE
+            value: yYrECL4qbNwleYInGJYvVnSkwJuSQJ4ijPTx5tirGUXrbznFIBFVJdPl5t6O9ASw
+          - name: PHX_HOST
+            value: localhost
+        resources:
+          limits:
+            memory: 500Mi
+        volumeMounts:
+          - name: config-rw
+            mountPath: /app/data
