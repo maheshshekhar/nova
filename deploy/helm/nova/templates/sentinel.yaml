@@ -78,6 +78,8 @@ spec:
             capabilities:
               drop: ["ALL"]
           env:
+            - name: HOME
+              value: /tmp
             - name: NOVA_URL
               value: {{ .Values.sentinel.novaUrl | default (printf "http://%s:%v" (include "nova.fullname" .) .Values.service.port) | quote }}
             - name: SENTINEL_NAMESPACES
@@ -93,6 +95,12 @@ spec:
             {{- end }}
           resources:
             {{- toYaml .Values.sentinel.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
       {{- with .Values.sentinel.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -21,5 +21,7 @@ COPY --chown=sentinel:nodejs lib ./lib
 
 USER sentinel
 
+ENV HOME=/tmp
 # Runs the pure engine (tested) driven by the Kubernetes informer runtime.
-CMD ["npx", "tsx", "lib/sentinel/run.ts"]
+# Invoke tsx's binary directly (no npx) so nothing needs to write an npm cache.
+CMD ["node_modules/.bin/tsx", "lib/sentinel/run.ts"]
