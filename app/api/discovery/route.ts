@@ -14,6 +14,18 @@ export async function GET(): Promise<NextResponse<DiscoveryReport>> {
   const metrics = getConfig().metrics
   const url = metrics.url
 
+  // Discovery fingerprints a Prometheus. When Nova is pointed at the k8s
+  // collector (provider: http) or nothing (none), there is no Prometheus to
+  // probe — say so plainly instead of 404-ing against a non-Prometheus URL.
+  if (metrics.provider !== "prometheus") {
+    return NextResponse.json({
+      reachable: false,
+      suggestions: [],
+      reason:
+        "Discovery needs metrics.provider: prometheus. Set it and point metrics.url at your Prometheus.",
+    })
+  }
+
   if (!url) {
     return NextResponse.json({
       reachable: false,
