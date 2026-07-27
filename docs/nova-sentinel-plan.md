@@ -113,18 +113,20 @@ domain:
 - [ ] Opens incidents via the store / `POST /api/incidents`; **dedupes** against
       incidents already created by `/api/alerts` (reuse per-service idempotency).
 
-### B1. Tier 1 — Kubernetes-native signals (build FIRST; most robust, no logs needed)  ⬜
-- [ ] k8s **informer/watch** collectors for:
-      - container/pod state: `CrashLoopBackOff`, `OOMKilled` (137), restart **trend**,
-        waiting reasons (`CreateContainerConfigError`, `RunContainerError`).
-      - Events: `BackOff`, `Unhealthy` (probe failures), `FailedMount`,
-        `FailedScheduling`, `ImagePullBackOff`/`ErrImagePull`, `FailedCreatePodSandBox`.
-      - **config/secret integrity**: a workload references a Secret/ConfigMap that
-        doesn't exist (caught before/at container start).
-      - rollout health: progress-deadline slipping; pods `Pending`/unschedulable.
-- [ ] Normalise everything into a common `Signal { service, namespace, kind,
-      severity, evidence, firstSeen, source }`.
-- [ ] Tests: pure signal extraction from k8s object/event **fixtures** (deterministic).
+### B1. Tier 1 — Kubernetes-native signals (build FIRST; most robust, no logs needed)  🚧 (pod extraction done)
+- [x] **Normalised `Signal` model** (`lib/sentinel/signal.ts`): `{ kind, service,
+      namespace, severity, hard, message, source }` + `hard` vs `soft` classification.
+- [x] **Pure pod → signal extraction** (`lib/sentinel/extract.ts`,
+      `extractPodSignals`): `CrashLoopBackOff`, `OOMKilled` (exit 137),
+      `ImagePullBackOff`/`ErrImagePull`, `CreateContainerConfigError` (missing
+      Secret/ConfigMap, keeps the message), `RunContainerError`/`Error`,
+      `HighRestarts` (soft, leading indicator), `Unschedulable`. Deterministic,
+      decoupled from the k8s client. **12 tests** with realistic fixtures.
+- [ ] **Event extraction** (`FailedMount`, `Unhealthy` probe, `BackOff`,
+      `FailedScheduling`, `FailedCreatePodSandBox`) — needs the informer's pod cache
+      for service resolution (next increment).
+- [ ] k8s **informer/watch** wiring that feeds real pods/events through the extractors.
+- [ ] rollout health: progress-deadline slipping.
 
 ### B2. Correlation + candidate→confirm engine  ⬜
 - [ ] Per-service, in-memory signal accumulation with a rolling window.
