@@ -128,16 +128,19 @@ domain:
 - [ ] k8s **informer/watch** wiring that feeds real pods/events through the extractors.
 - [ ] rollout health: progress-deadline slipping.
 
-### B2. Correlation + candidate→confirm engine  ⬜
-- [ ] Per-service, in-memory signal accumulation with a rolling window.
-- [ ] Scoring: **hard** signals (CrashLoop, OOMKilled, missing Secret) → open
-      immediately; **soft** signals (log-novelty, volume spike) → open only when
-      corroborated (≥ N independent signals or a hard confirm).
+### B2. Correlation + candidate→confirm engine  ✅ (core)
+- [x] Per-service, in-memory signal accumulation with a rolling window
+      (`lib/sentinel/correlate.ts`, `Correlator`, injectable clock).
+- [x] Scoring: **hard** signals (CrashLoop, OOMKilled, missing Secret) → open
+      immediately; **soft** signals → open only when corroborated (≥ `softConfirmKinds`
+      DISTINCT soft kinds in the window).
+- [x] Dedup (one open incident per service until `resolve()`); window expiry so
+      aged signals don't confirm; `confidence` (0.9 hard / 0.6 soft) + severity +
+      `reason` + evidence attached to each `IncidentDecision`.
+- [x] Tests: 8 — hard-immediate, single-soft-candidate, same-kind-no-confirm,
+      distinct-soft-confirm, dedup, window-expiry, resolve-reflag, multi-service.
 - [ ] **Leading indicators** ("tell before"): restarts *accelerating*, memory
-      *approaching* limit (OOM risk), rollout *degrading*, error-template frequency
-      *rising*.
-- [ ] Dedup + suppression windows; confidence attached to each incident.
-- [ ] Tests: deterministic scenarios (hard-immediate, soft-confirm, dedup, suppress).
+      *approaching* limit — a later refinement (soft signals already cover the base case).
 
 ### B3. Incident creation with evidence (no auto-RCA)  ⬜
 - [ ] Open an incident carrying the **evidence** (the signals + samples) and a
