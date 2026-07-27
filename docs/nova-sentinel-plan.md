@@ -35,12 +35,30 @@
       prometheus uses `collectorUrl` (never the prometheus url), defaults, and a
       guard that it never reads `process.env`. 408 total green, tsc clean, build OK.
 
-### A2. Reframe the provider model to "what you have"  ⬜
-- [ ] Providers read as: `prometheus` ("I have Prometheus" → RED metrics),
-      `kubernetes` ("read pod health from the k8s API" — today's collector, reframed,
-      optional), `none`. Keep `http` as a back-compat alias for `kubernetes`.
-- [ ] `prometheus` auto-adds k8s pod-health when available (existing hybrid merge).
-- [ ] Docs + Settings/Signals wording: pick a provider by what your cluster exposes.
+### A2. Reframe the provider model to "what you have"  ✅
+- [x] Providers now read as: `kubernetes` (**default** — "read pod/workload health
+      from the k8s API"), `prometheus` ("I have Prometheus" → **optional** app RED
+      metrics), `none`. `http` kept as a **legacy alias** for `kubernetes`.
+- [x] Behaviour-neutral: `kubernetes`/`http` share the same collector path today;
+      the collector is superseded by Nova's own informer reader in B0/B1.
+- [x] Docs (schema, `nova.config.example.yaml`, demo `nova-config.yaml`) reframed to
+      "pick by what you have"; `prometheus` clearly marked OPTIONAL (app RED only).
+- [x] Tests: default is `kubernetes`; `http` legacy alias still accepted;
+      `resolveCollectorUrl` covers `kubernetes`. 410 total green, tsc clean, build OK.
+
+> **ARCHITECTURE CORRECTION (2026-07-27) — no baggage.** After pressure-testing:
+> **k8s informers are the backbone** (they scale like any operator; the earlier
+> "direct read won't scale" worry was wrong). Therefore:
+> - **KSM + cAdvisor via Prometheus is DROPPED** — it's a redundant pipeline for
+>   data the informer already has. Not recommended, not required.
+> - **Prometheus is scoped to app RED metrics ONLY** (error rate / latency / RPS) —
+>   the one thing the k8s API can't provide. Optional enrichment; detection works
+>   fully from **k8s + logs** without it.
+> - **The custom `nova/metrics-collector` is retired** once B0/B1 lands (Nova's own
+>   informer reader takes over). Until then it remains as the transitional impl.
+> - Final sources: **k8s informers** (detection + pod/workload health) ·
+>   **metrics-server** (CPU/mem, optional) · **logs** (app detection) ·
+>   **Prometheus** (optional app RED). Nothing else.
 
 **Outcome:** the engineer edits ONE file (`nova-config.yaml`) to declare logs +
 metrics; no `dashboard.yaml` env juggling; no split pointers.

@@ -7,11 +7,11 @@ import { DEFAULT_CONFIG } from "@/lib/config/defaults"
 // schema accepts valid partial configs and rejects malformed ones with clear errors.
 
 describe("NovaConfigSchema — defaults reproduce today's behaviour", () => {
-  it("defaults to the file store, Loki logs, http metrics and openrouter AI", () => {
+  it("defaults to the file store, Loki logs, kubernetes metrics and openrouter AI", () => {
     expect(DEFAULT_CONFIG.persistence.provider).toBe("file")
     expect(DEFAULT_CONFIG.logs.provider).toBe("loki")
     expect(DEFAULT_CONFIG.logs.url).toBe("http://loki:3100")
-    expect(DEFAULT_CONFIG.metrics.provider).toBe("http")
+    expect(DEFAULT_CONFIG.metrics.provider).toBe("kubernetes")
     expect(DEFAULT_CONFIG.ai.provider).toBe("openrouter")
   })
 
@@ -140,11 +140,15 @@ describe("DashboardConfigSchema — source-driven presentation defaults", () => 
 })
 
 describe("MetricsConfigSchema — Prometheus adapter config", () => {
-  it("defaults to the http provider with an empty query map and 'service' label", () => {
+  it("defaults to the kubernetes provider with an empty query map and 'service' label", () => {
     const m = NovaConfigSchema.parse({}).metrics
-    expect(m.provider).toBe("http")
+    expect(m.provider).toBe("kubernetes")
     expect(m.serviceLabel).toBe("service")
     expect(m.queries).toEqual({})
+  })
+
+  it("still accepts `http` as a legacy alias for kubernetes", () => {
+    expect(NovaConfigSchema.parse({ metrics: { provider: "http" } }).metrics.provider).toBe("http")
   })
 
   it("parses a prometheus block with a query map", () => {

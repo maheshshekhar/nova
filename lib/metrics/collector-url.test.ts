@@ -12,6 +12,13 @@ describe("resolveCollectorUrl", () => {
     expect(resolveCollectorUrl({ provider: "http" })).toBe(DEFAULT_COLLECTOR_URL)
   })
 
+  it("kubernetes provider (the new default) behaves like http: collector IS metrics.url", () => {
+    expect(resolveCollectorUrl({ provider: "kubernetes", url: "http://collector:3001" })).toBe(
+      "http://collector:3001"
+    )
+    expect(resolveCollectorUrl({ provider: "kubernetes" })).toBe(DEFAULT_COLLECTOR_URL)
+  })
+
   it("prometheus provider: the collector is metrics.collectorUrl (NOT the prometheus url)", () => {
     expect(
       resolveCollectorUrl({
