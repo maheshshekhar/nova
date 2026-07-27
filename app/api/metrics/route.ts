@@ -2,8 +2,15 @@ import { NextResponse } from "next/server"
 import { getConfig } from "@/lib/config/loader"
 import { getMetricsSource } from "@/lib/metrics/registry"
 import { mergeServiceSources, collectorServicesFromPayload } from "@/lib/metrics/inventory"
+import { SingleFlightCache } from "@/lib/metrics/cache"
 
 const METRICS_URL = process.env.METRICS_COLLECTOR_URL || "http://metrics-collector:3001"
+
+// Coalesce upstream calls: many open dashboards polling at once share ONE call
+// to Prometheus / the collector per key within this window (back-pressure at
+// scale). Short TTL so a single client's poll cadence still sees fresh data.
+const CACHE_TTL_MS = 1000
+const cache = new SingleFlightCache(CACHE_TTL_MS)
 
 // Proxy an endpoint to the custom metrics-collector (k8s inventory: namespaces,
 // deployments, and the http-provider service metrics). Returns a 503 fallback
@@ -13,9 +20,12 @@ async function proxyCollector(endpoint: string, searchParams: URLSearchParams): 
   const qs = searchParams.toString()
   const target = `${METRICS_URL}/${endpoint}${qs ? `?${qs}` : ""}`
   try {
-    const response = await fetch(target, { next: { revalidate: 0 } })
-    if (!response.ok) throw new Error(`Metrics collector returned ${response.status}`)
-    return NextResponse.json(await response.json())
+    const data = await cache.get(`collector:${endpoint}:${qs}`, async () => {
+      const response = await fetch(target, { next: { revalidate: 0 } })
+      if (!response.ok) throw new Error(`Metrics collector returned ${response.status}`)
+      return response.json()
+    })
+    return NextResponse.json(data)
   } catch (err: any) {
     return NextResponse.json({ error: err.message, fallback: true }, { status: 503 })
   }
@@ -26,9 +36,11 @@ async function proxyCollector(endpoint: string, searchParams: URLSearchParams): 
 // pods). Empty when no collector is reachable.
 async function collectorServices() {
   try {
-    const res = await fetch(`${METRICS_URL}/metrics/services`, { next: { revalidate: 0 } })
-    if (!res.ok) return []
-    return collectorServicesFromPayload(await res.json())
+    return await cache.get("collector:services-parsed", async () => {
+      const res = await fetch(`${METRICS_URL}/metrics/services`, { next: { revalidate: 0 } })
+      if (!res.ok) return []
+      return collectorServicesFromPayload(await res.json())
+    })
   } catch {
     return []
   }
@@ -48,7 +60,7 @@ export async function GET(request: Request) {
     if (endpoint === "metrics/services") {
       try {
         const [services, collector] = await Promise.all([
-          getMetricsSource().getServiceMetrics(),
+          cache.get("prom:services", () => getMetricsSource().getServiceMetrics()),
           collectorServices(),
         ])
         return NextResponse.json({
