@@ -170,17 +170,27 @@ domain:
 - [ ] Retire the custom `nova/metrics-collector` + its `url:` config line once
       Sentinel is the detection backbone.
 
-### B4. Tier 2 — Log signals by *anomaly*, not keyword  ⬜
+### B4. Tier 2 — Log signals by *anomaly*, not keyword  🚧
 - [ ] Continuous log tail (Loki `tail` / k8s stream) into a rolling window.
-- [ ] **Log-template clustering** (Drain-style) → **novelty** detection: a
-      never-seen-before template is a signal (no `ERROR` keyword required).
-- [ ] **Volume / rate-shift** detection per service.
-- [ ] **Generic technical signature library** (shipped, config-extendable):
-      DB (pool exhausted, deadlock, `SQLSTATE`, conn refused), network
-      (reset/timeout/DNS/TLS), runtime (OOM, `panic:`, segfault, stack traces),
-      HTTP 5xx bursts, resource (disk full, throttling).
-- [ ] Opportunistic: use a structured `level` or HTTP status **if present** — never required.
-- [ ] Tests: template novelty, volume shift, signature matches across formats.
+- [x] **Log-template clustering** (Drain-style) → **novelty** detection
+      (`lib/sentinel/logs/template.ts`): `templatize()` masks variable tokens
+      (numbers, UUIDs, IPs, timestamps, hex, quoted strings); `LogTemplateMiner`
+      learns per-service templates silently during warm-up, then flags a
+      never-seen shape as novel (no `ERROR` keyword required). LRU-bounded.
+- [ ] **Volume / rate-shift** detection per service. *(next)*
+- [x] **Generic technical signature library** (`lib/sentinel/logs/signatures.ts`,
+      config-extendable via `extraSignatures`): DB (pool exhausted, unavailable,
+      deadlock, `SQLSTATE`), network (reset/refused/timeout/DNS/TLS), runtime
+      (panic, OOM, segfault, stack overflow, tracebacks), HTTP 5xx (status-context
+      only), resource (disk full, throttling). Conservative (precision-first):
+      unambiguous fatals are `hard`, the rest `soft`.
+- [x] `LogAnalyzer` (`lib/sentinel/logs/analyzer.ts`) turns a log line into the
+      same `Signal`s the Correlator consumes (signatures + novelty). Opportunistic
+      `level` field is accepted, never required.
+- [x] Tests: templatize masking, novelty warm-up/eviction, signature matches
+      across formats + false-positive guards, analyzer signals
+      (`lib/sentinel/logs/analyzer.test.ts`). 470 tests green.
+- [ ] Log-tail runtime wiring into the Sentinel engine + `detection.logs` config. *(next)*
 
 ### B5. Tier 3 — Domain + business + absence signals  ⬜
 - [ ] Use **Domain Pack** `impactSignal` patterns as declared business signals
