@@ -6,11 +6,15 @@ import { IncidentAlerts } from "@/components/dashboard/incident-alerts"
 import { ErrorRateChart, LatencyChart } from "@/components/dashboard/metrics-charts"
 import { ServiceHealthTable } from "@/components/dashboard/service-health-table"
 import { AiAnalysisPanel } from "@/components/dashboard/ai-analysis-panel"
+import { DiscoveryBanner } from "@/components/dashboard/discovery-banner"
 
 export default function OverviewPage() {
 
   return (
     <main className="max-w-[1600px] mx-auto px-4 lg:px-6 py-6 flex flex-col gap-6">
+      {/* First-run: nudge to configure detected signals */}
+      <DiscoveryBanner />
+
       {/* Summary stats */}
       <StatsBar />
 
