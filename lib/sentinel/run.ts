@@ -1,16 +1,20 @@
 import * as k8s from "@kubernetes/client-node"
+import { Writable } from "node:stream"
 import { SentinelEngine } from "./engine"
 import { Correlator } from "./correlate"
 import { HttpAlertSink } from "./sink"
+import { serviceNameFromLabels } from "./signal"
+import { parseLogLine } from "./logs/parse"
 import type { EventLike, PodLike } from "./extract"
 
 // The Sentinel runtime — the only I/O-bound piece.
 //
 // It watches Kubernetes Pods and Events with informers (the same mechanism
 // operators use, so it scales to thousands of objects without polling), and
-// forwards every observed object to the pure `SentinelEngine`. Detection logic,
-// correlation and incident mapping all live in tested, cluster-free modules;
-// this file is deliberately thin.
+// tails the logs of the pods in scope. Every observed object / log line is
+// forwarded to the pure `SentinelEngine`. Detection logic, correlation and
+// incident mapping all live in tested, cluster-free modules; this file is
+// deliberately thin.
 //
 // Configuration is entirely environment-driven so the companion needs no access
 // to Nova's server-only config loader:
@@ -19,6 +23,7 @@ import type { EventLike, PodLike } from "./extract"
 //   SENTINEL_DRY_RUN    "true" → log decisions, never open incidents
 //   SENTINEL_WINDOW_MS  correlation window in ms (default 600000)
 //   SENTINEL_SOFT_CONFIRM distinct soft signal kinds to confirm (default 2)
+//   SENTINEL_LOGS       "false" → disable pod-log tailing (default on)
 
 interface RuntimeConfig {
   novaUrl: string
@@ -26,6 +31,7 @@ interface RuntimeConfig {
   dryRun: boolean
   windowMs: number
   softConfirmKinds: number
+  logs: boolean
 }
 
 function readConfig(): RuntimeConfig {
@@ -38,6 +44,7 @@ function readConfig(): RuntimeConfig {
     dryRun: process.env.SENTINEL_DRY_RUN === "true",
     windowMs: Number(process.env.SENTINEL_WINDOW_MS) || 10 * 60 * 1000,
     softConfirmKinds: Number(process.env.SENTINEL_SOFT_CONFIRM) || 2,
+    logs: process.env.SENTINEL_LOGS !== "false",
   }
 }
 
@@ -45,6 +52,10 @@ const RESTART_DELAY_MS = 5000
 
 function log(message: string): void {
   console.log(`[nova-sentinel] ${message}`)
+}
+
+interface Abortable {
+  abort(): void
 }
 
 /**
@@ -77,6 +88,77 @@ function runInformer<T extends k8s.KubernetesObject>(
   )
 }
 
+/** Tails the logs of in-scope pods, forwarding each parsed line to the engine.
+ * One follow-stream per container; started when a pod is Running, aborted when
+ * the pod is deleted. Only new logs (sinceSeconds) are read so historical lines
+ * never open incidents. */
+function makeLogTailer(kc: k8s.KubeConfig, engine: SentinelEngine) {
+  const logApi = new k8s.Log(kc)
+  const streams = new Map<string, Abortable | null>()
+
+  function lineSink(service: string, namespace: string, pod: string): Writable {
+    let buf = ""
+    return new Writable({
+      write(chunk, _enc, cb) {
+        buf += chunk.toString("utf8")
+        let nl: number
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const raw = buf.slice(0, nl)
+          buf = buf.slice(nl + 1)
+          const line = parseLogLine(raw, { service, namespace, pod })
+          if (line) void engine.onLog(line).catch((e) => log(`onLog error: ${e}`))
+        }
+        cb()
+      },
+    })
+  }
+
+  return {
+    start(pod: k8s.V1Pod): void {
+      if (pod.status?.phase !== "Running") return
+      const namespace = pod.metadata?.namespace
+      const name = pod.metadata?.name
+      if (!namespace || !name) return
+      const service = serviceNameFromLabels(pod.metadata?.labels, name)
+      for (const c of pod.spec?.containers ?? []) {
+        const key = `${namespace}/${name}/${c.name}`
+        if (streams.has(key)) continue
+        streams.set(key, null) // reserve to avoid a double-start race
+        logApi
+          .log(namespace, name, c.name ?? "", lineSink(service, namespace, name), {
+            follow: true,
+            sinceSeconds: 2,
+            timestamps: false,
+          })
+          .then(
+            (req) => {
+              streams.set(key, req as unknown as Abortable)
+            },
+            (err) => {
+              streams.delete(key)
+              log(`log tail failed for ${key}: ${err}`)
+            }
+          )
+      }
+    },
+    stop(pod: k8s.V1Pod): void {
+      const namespace = pod.metadata?.namespace
+      const name = pod.metadata?.name
+      if (!namespace || !name) return
+      const prefix = `${namespace}/${name}/`
+      for (const [key, req] of streams) {
+        if (!key.startsWith(prefix)) continue
+        try {
+          req?.abort()
+        } catch {
+          // best effort
+        }
+        streams.delete(key)
+      }
+    },
+  }
+}
+
 export function start(): void {
   const cfg = readConfig()
   const kc = new k8s.KubeConfig()
@@ -94,16 +176,21 @@ export function start(): void {
     dryRun: cfg.dryRun,
     logger: log,
   })
+  const tailer = cfg.logs ? makeLogTailer(kc, engine) : null
 
   const scopes = cfg.namespaces.length > 0 ? cfg.namespaces : [null]
   log(
-    `starting — nova=${cfg.novaUrl} scope=${cfg.namespaces.length ? cfg.namespaces.join(",") : "all namespaces"} dryRun=${cfg.dryRun}`
+    `starting — nova=${cfg.novaUrl} scope=${cfg.namespaces.length ? cfg.namespaces.join(",") : "all namespaces"} dryRun=${cfg.dryRun} logs=${cfg.logs}`
   )
 
   const onPod = (obj: k8s.V1Pod) => {
     void engine.onPod(obj as PodLike).catch((e) => log(`onPod error: ${e}`))
+    tailer?.start(obj)
   }
-  const onPodDeleted = (obj: k8s.V1Pod) => engine.onPodDeleted(obj as PodLike)
+  const onPodDeleted = (obj: k8s.V1Pod) => {
+    engine.onPodDeleted(obj as PodLike)
+    tailer?.stop(obj)
+  }
   const onEvent = (obj: k8s.CoreV1Event) => {
     void engine.onEvent(obj as EventLike).catch((e) => log(`onEvent error: ${e}`))
   }

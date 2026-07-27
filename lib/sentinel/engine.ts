@@ -6,12 +6,13 @@ import { serviceNameFromLabels } from "./signal"
 import type { Signal } from "./signal"
 import type { IncidentSink } from "./sink"
 import { PodServiceIndex } from "./service-index"
+import { LogAnalyzer, type LogLine } from "./logs/analyzer"
 
 // The Sentinel engine — the pure decision core the informer worker drives.
 //
 // The runtime (run.ts) owns the Kubernetes watch/I/O and simply forwards each
-// observed object here: `onPod` / `onEvent` / `onPodDeleted`. The engine keeps
-// the pod→service index current, extracts signals, runs them through the
+// observed object here: `onPod` / `onEvent` / `onPodDeleted` / `onLog`. The engine
+// keeps the pod→service index current, extracts signals, runs them through the
 // correlation engine, and (unless in dry-run) posts the resulting incidents to
 // the sink. Decoupled from the k8s client ⇒ fully unit-testable with fixtures.
 
@@ -19,6 +20,7 @@ export interface SentinelEngineOptions {
   sink: IncidentSink
   correlator?: Correlator
   index?: PodServiceIndex
+  analyzer?: LogAnalyzer
   /** When true, decisions are logged, never posted. */
   dryRun?: boolean
   logger?: (message: string) => void
@@ -35,6 +37,7 @@ function isPodReady(pod: PodLike): boolean {
 export class SentinelEngine {
   readonly index: PodServiceIndex
   private readonly correlator: Correlator
+  private readonly analyzer: LogAnalyzer
   private readonly sink: IncidentSink
   private readonly dryRun: boolean
   private readonly log: (message: string) => void
@@ -44,6 +47,7 @@ export class SentinelEngine {
     this.sink = opts.sink
     this.correlator = opts.correlator ?? new Correlator()
     this.index = opts.index ?? new PodServiceIndex()
+    this.analyzer = opts.analyzer ?? new LogAnalyzer({ now: opts.now })
     this.dryRun = opts.dryRun ?? false
     this.log = opts.logger ?? ((m) => console.log(m))
     this.now = opts.now ?? Date.now
@@ -71,6 +75,12 @@ export class SentinelEngine {
   async onEvent(event: EventLike): Promise<void> {
     const signal = extractEventSignal(event, this.index.resolve)
     if (signal) await this.process([signal])
+  }
+
+  /** Feed one log line through the log-anomaly analyzer (signatures + novelty +
+   * rate) and correlate any resulting signals. */
+  async onLog(line: LogLine): Promise<void> {
+    await this.process(this.analyzer.observe(line))
   }
 
   private async process(signals: Signal[]): Promise<void> {

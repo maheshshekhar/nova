@@ -44,6 +44,22 @@ const SIGNAL_TO_FAILURE: Record<string, FailureType> = {
   FailedScheduling: "node-cpu-insufficient",
   SandboxError: "network",
   BackOff: "CrashLoopBackOff",
+  // Log-derived signals (lib/sentinel/logs). Prefixed "Log:" for signatures.
+  "Log:OutOfMemory": "OOMKilled",
+  "Log:DBPoolExhausted": "db-pool-exhaustion",
+  "Log:DBUnavailable": "db-pool-exhaustion",
+  "Log:DBDeadlock": "deadlock",
+  "Log:TLSError": "tls-cert-expiry",
+  "Log:ConnReset": "network",
+  "Log:ConnRefused": "network",
+  "Log:NetTimeout": "network",
+  "Log:DNSFailure": "network",
+  "Log:DiskFull": "disk-pressure",
+  "Log:Throttled": "rate-limit",
+  "Log:HTTP5xx": "bad-deploy",
+  "Log:Panic": "bad-deploy",
+  "Log:Segfault": "bad-deploy",
+  "Log:StackOverflow": "bad-deploy",
 }
 
 export function decisionToAlert(decision: IncidentDecision, at: number = Date.now()): SentinelAlert {
