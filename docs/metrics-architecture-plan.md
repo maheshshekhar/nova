@@ -253,10 +253,15 @@ entry). Detection **never** drives a live tile — it only proposes YAML to comm
       services (`rankBySeverity`/`capServices` in `lib/dashboard/service-filter.ts`), with a
       "showing top N of M" note. (Full row **virtualization** deferred — cap covers the common case.)
 - [x] **Configurable poll cadence** — `dashboard.scale.pollSec` drives the single live poll in
-      `lib/metrics-live.tsx` (was hardcoded 3s). Server-side caching / back-pressure deferred.
+      `lib/metrics-live.tsx` (was hardcoded 3s).
+- [x] **Server-side single-flight cache + back-pressure** — `lib/metrics/cache.ts`
+      (`SingleFlightCache`, 1s TTL) wraps the upstream Prometheus/collector calls in
+      `app/api/metrics/route.ts`, so N dashboards polling at once collapse into **one** upstream
+      call per key (no thundering herd on Prometheus at scale).
 - [ ] Load/perf test at simulated 1–2k services; document limits + recommended recording rules.
 - [x] Tests: `rankBySeverity`/`capServices` ordering + cap + no-mutate; config-view `scale`
-      projection (pollSec + optional topN). 399 total green, tsc clean, build OK.
+      projection; `SingleFlightCache` (single-flight, TTL, per-key, no-cache-on-failure).
+      403 total green, tsc clean, build OK.
 
 ---
 
