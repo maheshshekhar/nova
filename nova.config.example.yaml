@@ -48,13 +48,14 @@ persistence:
 
 # ── Metrics (optional) ───────────────────────────────────────────────────────
 metrics:
-  provider: http                # prometheus | http | none
+  provider: kubernetes          # kubernetes | prometheus | none  (http = legacy alias for kubernetes)
   url: ${METRICS_COLLECTOR_URL:-http://metrics-collector:3001}
-  # collectorUrl is the k8s metrics-collector endpoint. For provider `http` the
-  # collector IS the source (use `url` above). For provider `prometheus` it
-  # ENRICHES Prometheus with pod inventory (pod counts / crash state) — set it:
+  # provider: kubernetes → Nova reads pod/workload health from the Kubernetes API
+  #   (today via the bundled collector at `url`; a built-in informer reader replaces
+  #   it soon). `collectorUrl` below applies only to provider: prometheus, where the
+  #   collector ENRICHES Prometheus with pod inventory (pod counts / crash state):
   # collectorUrl: ${METRICS_COLLECTOR_URL:-http://metrics-collector:3001}
-  # ── Prometheus provider ──────────────────────────────────────────────────
+  # ── Prometheus provider (OPTIONAL — app RED metrics) ──────────────────────
   # Nova is a PromQL CLIENT — it queries your existing Prometheus, it never
   # scrapes (that's your ServiceMonitor / scrape_configs). Point it at Prometheus
   # and declare which PromQL produces which metric key (domain-agnostic — no

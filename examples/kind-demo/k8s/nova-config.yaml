@@ -31,12 +31,14 @@ data:
     # ── Metrics: WHERE Nova reads service metrics from ──────────────────
     # This is the ONLY place that configures Nova's metrics. Pick one provider:
     #
-    #  1) http (default) — Nova's bundled k8s collector: CPU / memory / pod-health
-    #     / deployments for EVERY workload, zero config. What ships out of the box.
-    #  2) prometheus — read REAL app metrics (error rate / latency / RPS) from a
-    #     workload's OWN Prometheus. You declare the queries (or let the Signals
-    #     tab at /settings detect the exporter and generate them), so you always
-    #     know exactly what data drives the dashboard.
+    #  1) kubernetes (default) — Nova reads pod/workload health (CPU / memory /
+    #     pod status / deployments) from the Kubernetes API for EVERY workload,
+    #     zero config. (Today via the bundled collector at `url`; a built-in
+    #     informer reader replaces it soon. `http` is a legacy alias.)
+    #  2) prometheus — OPTIONAL: add REAL app metrics (error rate / latency / RPS)
+    #     from a workload's OWN Prometheus. You declare the queries (or let the
+    #     Signals tab at /settings generate them), so you always know exactly what
+    #     data drives the dashboard.
     #
     # Example: point at the OTel demo's Prometheus (deploy-reference-apps.sh → 1),
     # which is exposed at prometheus.otel-demo:9090 — replace the two lines below:
@@ -45,5 +47,5 @@ data:
     #     url: http://prometheus.otel-demo:9090
     #     serviceLabel: job
     metrics:
-      provider: http
+      provider: kubernetes
       url: ${METRICS_COLLECTOR_URL:-http://metrics-collector:3001}

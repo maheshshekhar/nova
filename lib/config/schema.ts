@@ -121,7 +121,13 @@ export type PersistenceConfig = z.infer<typeof PersistenceConfigSchema>
 // ── Metrics ──────────────────────────────────────────────────────────────────
 export const MetricsConfigSchema = z
   .object({
-    provider: z.enum(["prometheus", "http", "none"]).default("http"),
+    // `kubernetes` (default): Nova reads pod/workload health from the Kubernetes
+    // API. Today via the bundled collector at `url`/`collectorUrl`; Nova's own
+    // informer reader replaces the collector in a later step (see
+    // docs/nova-sentinel-plan.md, B0/B1). `prometheus`: OPTIONAL — add app RED
+    // metrics (error rate / latency / RPS) from your Prometheus. `http` is a
+    // legacy alias for `kubernetes`. `none` disables metrics entirely.
+    provider: z.enum(["prometheus", "kubernetes", "http", "none"]).default("kubernetes"),
     url: z.string().optional(),
     // The Kubernetes metrics-collector endpoint. For provider `http` the collector
     // IS the metrics source (so `url` points at it); for provider `prometheus` the

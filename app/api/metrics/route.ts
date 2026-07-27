@@ -86,6 +86,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ fallback: true }, { status: 503 })
   }
 
-  // ── http provider (default): proxy the custom metrics-collector ──────────
+  // ── kubernetes / http provider (default): proxy the k8s metrics-collector ──
+  // (`http` is a legacy alias for `kubernetes`; both read pod/workload health
+  // from the collector today — superseded by Nova's informer reader in B0/B1.)
   return proxyCollector(collectorBase, endpoint, searchParams)
 }
