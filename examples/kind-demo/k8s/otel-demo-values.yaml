@@ -59,3 +59,27 @@ components:
         volumeMounts:
           - name: config-rw
             mountPath: /app/data
+
+# ── Prometheus (expose it for Nova) ───────────────────────────────────────────
+# The OTel demo bundles its own Prometheus. We pin it explicitly (these mirror the
+# chart defaults) so the endpoint Nova points at stays STABLE across chart bumps:
+#
+#     http://prometheus.otel-demo:9090
+#
+# To make Nova read REAL RED metrics (error rate / latency / RPS) from it, set
+# Nova's metrics block — edit examples/kind-demo/k8s/nova-config.yaml, or live:
+#   kubectl -n nova-monitoring edit configmap nova-config
+#
+#     metrics:
+#       provider: prometheus
+#       url: http://prometheus.otel-demo:9090
+#       serviceLabel: job        # OTel labels series by `job` (verify vs service_name)
+#
+# then reload:  kubectl -n nova-monitoring rollout restart deployment/dashboard
+# Nova's Signals tab (/settings) will then detect the OTel exporter and generate
+# the queries; the overview banner nudges you to commit them.
+prometheus:
+  enabled: true
+  server:
+    fullnameOverride: prometheus   # → Service "prometheus" (:9090) in otel-demo
+
