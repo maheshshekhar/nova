@@ -3,8 +3,7 @@ import { getConfig } from "@/lib/config/loader"
 import { getMetricsSource } from "@/lib/metrics/registry"
 import { mergeServiceSources, collectorServicesFromPayload } from "@/lib/metrics/inventory"
 import { SingleFlightCache } from "@/lib/metrics/cache"
-
-const METRICS_URL = process.env.METRICS_COLLECTOR_URL || "http://metrics-collector:3001"
+import { resolveCollectorUrl } from "@/lib/metrics/collector-url"
 
 // Coalesce upstream calls: many open dashboards polling at once share ONE call
 // to Prometheus / the collector per key within this window (back-pressure at
@@ -15,10 +14,14 @@ const cache = new SingleFlightCache(CACHE_TTL_MS)
 // Proxy an endpoint to the custom metrics-collector (k8s inventory: namespaces,
 // deployments, and the http-provider service metrics). Returns a 503 fallback
 // when the collector is unreachable — the dashboard renders empty states.
-async function proxyCollector(endpoint: string, searchParams: URLSearchParams): Promise<Response> {
+async function proxyCollector(
+  base: string,
+  endpoint: string,
+  searchParams: URLSearchParams
+): Promise<Response> {
   searchParams.delete("endpoint")
   const qs = searchParams.toString()
-  const target = `${METRICS_URL}/${endpoint}${qs ? `?${qs}` : ""}`
+  const target = `${base}/${endpoint}${qs ? `?${qs}` : ""}`
   try {
     const data = await cache.get(`collector:${endpoint}:${qs}`, async () => {
       const response = await fetch(target, { next: { revalidate: 0 } })
@@ -34,10 +37,10 @@ async function proxyCollector(endpoint: string, searchParams: URLSearchParams): 
 // Best-effort collector service list, used to enrich Prometheus metrics with pod
 // counts AND to union in services Prometheus can't scrape (e.g. CrashLoopBackOff
 // pods). Empty when no collector is reachable.
-async function collectorServices() {
+async function collectorServices(base: string) {
   try {
     return await cache.get("collector:services-parsed", async () => {
-      const res = await fetch(`${METRICS_URL}/metrics/services`, { next: { revalidate: 0 } })
+      const res = await fetch(`${base}/metrics/services`, { next: { revalidate: 0 } })
       if (!res.ok) return []
       return collectorServicesFromPayload(await res.json())
     })
@@ -49,7 +52,10 @@ async function collectorServices() {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const endpoint = searchParams.get("endpoint") || "metrics"
-  const provider = getConfig().metrics.provider
+  const metrics = getConfig().metrics
+  const provider = metrics.provider
+  // Single source of truth: the collector endpoint comes from config, not env.
+  const collectorBase = resolveCollectorUrl(metrics)
 
   // ── Prometheus provider ──────────────────────────────────────────────────
   // Per-service metrics come from Prometheus (PromQL), unioned with the
@@ -61,7 +67,7 @@ export async function GET(request: Request) {
       try {
         const [services, collector] = await Promise.all([
           cache.get("prom:services", () => getMetricsSource().getServiceMetrics()),
-          collectorServices(),
+          collectorServices(collectorBase),
         ])
         return NextResponse.json({
           services: mergeServiceSources(services, collector),
@@ -72,7 +78,7 @@ export async function GET(request: Request) {
       }
     }
     // namespaces / deployments → collector (k8s inventory), best-effort.
-    return proxyCollector(endpoint, searchParams)
+    return proxyCollector(collectorBase, endpoint, searchParams)
   }
 
   // ── No metrics source configured ─────────────────────────────────────────
@@ -81,5 +87,5 @@ export async function GET(request: Request) {
   }
 
   // ── http provider (default): proxy the custom metrics-collector ──────────
-  return proxyCollector(endpoint, searchParams)
+  return proxyCollector(collectorBase, endpoint, searchParams)
 }
