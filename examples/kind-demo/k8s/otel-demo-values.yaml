@@ -60,24 +60,13 @@ components:
           - name: config-rw
             mountPath: /app/data
 
-# ── Prometheus (expose it for Nova) ───────────────────────────────────────────
-# The OTel demo bundles its own Prometheus. We pin it explicitly (these mirror the
-# chart defaults) so the endpoint Nova points at stays STABLE across chart bumps:
+# ── Prometheus (the demo's OWN metrics stack) ───────────────────────────────────────────
+# The OTel demo bundles its OWN Prometheus. We pin its Service name (mirrors the
+# chart default) so the endpoint stays stable at:  prometheus.otel-demo:9090
 #
-#     http://prometheus.otel-demo:9090
-#
-# To make Nova read REAL RED metrics (error rate / latency / RPS) from it, set
-# Nova's metrics block — edit examples/kind-demo/k8s/nova-config.yaml, or live:
-#   kubectl -n nova-monitoring edit configmap nova-config
-#
-#     metrics:
-#       provider: prometheus
-#       url: http://prometheus.otel-demo:9090
-#       serviceLabel: job        # OTel labels series by `job` (verify vs service_name)
-#
-# then reload:  kubectl -n nova-monitoring rollout restart deployment/dashboard
-# Nova's Signals tab (/settings) will then detect the OTel exporter and generate
-# the queries; the overview banner nudges you to commit them.
+# NOTE: this is the WORKLOAD's Prometheus — it does NOT configure Nova. Telling
+# Nova to READ from it is a separate, Nova-side choice in Nova's own config
+# (examples/kind-demo/k8s/nova-config.yaml → the `metrics:` block).
 prometheus:
   enabled: true
   server:
