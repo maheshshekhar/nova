@@ -21,9 +21,10 @@ import {
 } from "@/lib/metrics-series"
 
 export function MetricsLiveProvider({ children }: { children: ReactNode }) {
-  // The one and only metrics poll for the dashboard.
-  const realMetrics = useStandaloneRealMetrics(3000, true)
   const { config } = useDashboardConfig()
+  // The one and only metrics poll for the dashboard. Cadence is config-driven
+  // (dashboard.scale.pollSec) so large clusters can throttle the poll.
+  const realMetrics = useStandaloneRealMetrics(Math.max(1, config.scale.pollSec) * 1000, true)
 
   // Rolling series, seeded from localStorage (survives reload) or a flat zero
   // baseline. Living in this provider (mounted in the root layout) means the

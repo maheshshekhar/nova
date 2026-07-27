@@ -245,15 +245,18 @@ entry). Detection **never** drives a live tile — it only proposes YAML to comm
       escaping; `${PROMETHEUS_URL}` placeholder (no host committed); `authTokenEnv` name-only;
       end-to-end from a real discovery suggestion (no `$SVC` leak). 389 total green, tsc clean, build OK.
 
-## Phase 5 — Scale hardening (100s–1000s of pods)  ⬜
+## Phase 5 — Scale hardening (100s–1000s of pods)  🚧 (topN cap + poll cadence done)
 
 - [ ] `scale.mode: aggregate` — fleet aggregates via Prometheus **recording rules** /
       kube-state-metrics instead of listing every pod each tick.
-- [ ] Cardinality guards: query by label selector, `topN` cap, **virtualized/paginated**
-      service tables.
-- [ ] Configurable poll cadence + server-side caching; back-pressure on slow upstreams.
+- [x] **`topN` cardinality cap** — `dashboard.scale.topN` renders only the worst-severity N
+      services (`rankBySeverity`/`capServices` in `lib/dashboard/service-filter.ts`), with a
+      "showing top N of M" note. (Full row **virtualization** deferred — cap covers the common case.)
+- [x] **Configurable poll cadence** — `dashboard.scale.pollSec` drives the single live poll in
+      `lib/metrics-live.tsx` (was hardcoded 3s). Server-side caching / back-pressure deferred.
 - [ ] Load/perf test at simulated 1–2k services; document limits + recommended recording rules.
-- [ ] Tests: aggregation correctness vs enumerate mode; topN + virtualization; cache TTL.
+- [x] Tests: `rankBySeverity`/`capServices` ordering + cap + no-mutate; config-view `scale`
+      projection (pollSec + optional topN). 399 total green, tsc clean, build OK.
 
 ---
 

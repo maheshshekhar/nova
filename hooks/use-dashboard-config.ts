@@ -10,6 +10,7 @@ const DEFAULT_VIEW: DashboardConfigView = {
   serviceTable: { columns: "auto" },
   stats: { tiles: "auto" },
   thresholds: {},
+  scale: { pollSec: 3 },
 }
 
 // Module-level cache: the dashboard config is file-authoritative and effectively

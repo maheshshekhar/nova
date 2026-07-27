@@ -25,7 +25,9 @@ export async function GET(): Promise<NextResponse<DiscoveryReport>> {
   try {
     const authToken = metrics.authTokenEnv ? process.env[metrics.authTokenEnv] : undefined
     const names = await fetchMetricNames(url, { authToken })
-    return NextResponse.json(buildReport(url, names))
+    const report = buildReport(url, names)
+    report.pinnedKeys = Object.keys(metrics.queries ?? {})
+    return NextResponse.json(report)
   } catch (err: any) {
     return NextResponse.json({
       reachable: false,

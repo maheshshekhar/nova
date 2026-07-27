@@ -32,8 +32,27 @@ export interface DiscoveryReport {
   metricNameCount?: number
   /** Ranked exporter suggestions (highest confidence first). */
   suggestions: DiscoverySuggestion[]
+  /** Metric keys already pinned in `metrics.queries` (set by the route). */
+  pinnedKeys?: string[]
   /** Populated when discovery could not run or found nothing. */
   reason?: string
+}
+
+/**
+ * The distinct signal keys that a detected exporter can provide but that are NOT
+ * yet pinned in `metrics.queries`. Drives the first-run "you have unconfigured
+ * signals" nudge. Pure so it is unit-testable.
+ */
+export function unpinnedDetectedKeys(report: DiscoveryReport): string[] {
+  if (!report.reachable) return []
+  const pinned = new Set(report.pinnedKeys ?? [])
+  const keys = new Set<string>()
+  for (const s of report.suggestions) {
+    for (const key of Object.keys(s.queries)) {
+      if (!pinned.has(key)) keys.add(key)
+    }
+  }
+  return [...keys]
 }
 
 /** Expand a preset's `$SVC` templates against a (possibly overridden) service label. */

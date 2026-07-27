@@ -10,6 +10,7 @@ describe("buildDashboardConfigView", () => {
       serviceTable: { columns: "auto" },
       stats: { tiles: "auto" },
       thresholds: {},
+      scale: { pollSec: 3 },
     })
   })
 
@@ -27,6 +28,19 @@ describe("buildDashboardConfigView", () => {
     expect(view.serviceTable.columns).toEqual(["status", "avgCpu"])
     expect(view.stats.tiles).toEqual([{ id: "cpu", label: "CPU", kind: "metric", metric: "avgCpu" }])
     expect(view.thresholds.errorRate).toEqual({ warn: 2, critical: 8 })
+  })
+
+  it("projects the scale controls (pollSec + optional topN)", () => {
+    const cfg = NovaConfigSchema.parse({
+      dashboard: { scale: { pollSec: 15, topN: 100 } },
+    }).dashboard
+    expect(buildDashboardConfigView(cfg).scale).toEqual({ pollSec: 15, topN: 100 })
+  })
+
+  it("omits topN from the projection when unset", () => {
+    const view = buildDashboardConfigView(NovaConfigSchema.parse({}).dashboard)
+    expect(view.scale).toEqual({ pollSec: 3 })
+    expect("topN" in view.scale).toBe(false)
   })
 
   it("projects a query tile WITHOUT leaking the raw PromQL to the browser", () => {

@@ -2,7 +2,7 @@
 
 import { useDashboardConfig } from "@/hooks/use-dashboard-config"
 import { useRealMetrics, type RealServiceMetric } from "@/hooks/use-real-metrics"
-import { appServices } from "@/lib/dashboard/service-filter"
+import { appServices, capServices } from "@/lib/dashboard/service-filter"
 import {
   getDescriptor,
   evaluateHealth,
@@ -95,6 +95,9 @@ export function ServiceHealthTable() {
     ? appServices(realMetrics.services, config.infraWorkloads)
     : []
 
+  // On large clusters, render only the worst-severity `topN` (config-driven).
+  const visibleServices = capServices(services, config.scale.topN)
+
   // Resolve the columns to render. "auto" derives from the fields actually present
   // in the data; an explicit list is honoured as-is.
   const columnKeys =
@@ -159,6 +162,11 @@ export function ServiceHealthTable() {
               {healthyCount}/{services.length} healthy
             </span>
           )}
+          {visibleServices.length < services.length && (
+            <span className="text-[10px] font-mono text-muted-foreground/70">
+              showing top {visibleServices.length} of {services.length}
+            </span>
+          )}
           <span className="flex items-center gap-1 text-[10px] font-mono">
             <span className={`w-1.5 h-1.5 rounded-full ${realMetrics.available ? "bg-[var(--neon-green)]" : "bg-muted-foreground"}`} />
             <span className={realMetrics.available ? "text-[var(--neon-green)]" : "text-muted-foreground"}>
@@ -204,7 +212,7 @@ export function ServiceHealthTable() {
                 </tr>
               </thead>
               <tbody>
-                {services.map((svc, i) => (
+                {visibleServices.map((svc, i) => (
                   <tr
                     key={`${svc.namespace ?? ""}/${svc.name}`}
                     className={`border-b border-border/40 transition-colors hover:bg-secondary/20 ${

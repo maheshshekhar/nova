@@ -4,6 +4,7 @@ import {
   expandQueries,
   buildReport,
   fetchMetricNames,
+  unpinnedDetectedKeys,
 } from "@/lib/discovery/fingerprint"
 import { PRESETS } from "@/lib/discovery/presets"
 
@@ -85,6 +86,35 @@ describe("buildReport", () => {
     const report = buildReport("http://prom:9090", ["up"])
     expect(report.suggestions).toEqual([])
     expect(report.reason).toMatch(/No known exporter/)
+  })
+})
+
+describe("unpinnedDetectedKeys", () => {
+  it("returns detected signal keys that are not already pinned", () => {
+    const report = buildReport("http://prom:9090", [
+      "istio_requests_total",
+      "istio_request_duration_milliseconds_bucket",
+    ])
+    report.pinnedKeys = ["errorRate"] // already committed
+    const keys = unpinnedDetectedKeys(report)
+    expect(keys).not.toContain("errorRate")
+    expect(keys).toContain("rps")
+    expect(keys).toContain("latencyP95")
+  })
+
+  it("returns nothing when everything detected is already pinned", () => {
+    const report = buildReport("http://prom:9090", [
+      "istio_requests_total",
+      "istio_request_duration_milliseconds_bucket",
+    ])
+    const allKeys = new Set<string>()
+    report.suggestions.forEach((s) => Object.keys(s.queries).forEach((k) => allKeys.add(k)))
+    report.pinnedKeys = [...allKeys]
+    expect(unpinnedDetectedKeys(report)).toEqual([])
+  })
+
+  it("returns nothing when Prometheus is unreachable", () => {
+    expect(unpinnedDetectedKeys({ reachable: false, suggestions: [] })).toEqual([])
   })
 })
 

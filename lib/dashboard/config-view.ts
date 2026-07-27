@@ -23,6 +23,7 @@ export interface DashboardConfigView {
   serviceTable: { columns: "auto" | string[] }
   stats: { tiles: "auto" | DashboardTileView[] }
   thresholds: Record<string, { warn?: number; critical?: number }>
+  scale: { pollSec: number; topN?: number }
 }
 
 export function buildDashboardConfigView(cfg: DashboardConfig): DashboardConfigView {
@@ -56,5 +57,9 @@ export function buildDashboardConfigView(cfg: DashboardConfig): DashboardConfigV
         { warn: v.warn, critical: v.critical },
       ])
     ),
+    scale: {
+      pollSec: cfg.scale.pollSec,
+      ...(cfg.scale.topN ? { topN: cfg.scale.topN } : {}),
+    },
   }
 }
