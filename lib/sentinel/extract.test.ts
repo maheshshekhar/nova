@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { extractPodSignals, type PodLike } from "@/lib/sentinel/extract"
+import { extractPodSignals, extractEventSignal, type PodLike, type EventLike } from "@/lib/sentinel/extract"
 
 // Build a pod fixture with one container in a given state.
 function pod(over: {
@@ -125,5 +125,46 @@ describe("extractPodSignals — service resolution & hygiene", () => {
   it("emits multiple DISTINCT kinds from one pod (e.g. OOMKilled + HighRestarts)", () => {
     const sigs = extractPodSignals(pod({ container: { restartCount: 5, lastTerminated: { reason: "OOMKilled", exitCode: 137 } } }))
     expect(sigs.map((s) => s.kind).sort()).toEqual(["HighRestarts", "OOMKilled"])
+  })
+})
+
+describe("extractEventSignal", () => {
+  const evt = (over: Partial<EventLike> & { reason?: string }): EventLike => ({
+    type: "Warning",
+    involvedObject: { kind: "Pod", name: "checkout-abc123", namespace: "prod" },
+    ...over,
+  })
+
+  it("FailedMount → hard critical, keeps the message", () => {
+    const s = extractEventSignal(evt({ reason: "FailedMount", message: 'secret "db-creds" not found' }))!
+    expect(s).toMatchObject({ kind: "FailedMount", severity: "critical", hard: true, namespace: "prod" })
+    expect(s.message).toContain('secret "db-creds" not found')
+  })
+
+  it("Unhealthy (probe) → soft warning ProbeFailure", () => {
+    const s = extractEventSignal(evt({ reason: "Unhealthy", message: "Readiness probe failed" }))!
+    expect(s).toMatchObject({ kind: "ProbeFailure", severity: "warning", hard: false })
+  })
+
+  it("FailedCreatePodSandBox → hard critical SandboxError", () => {
+    expect(extractEventSignal(evt({ reason: "FailedCreatePodSandBox" }))!.kind).toBe("SandboxError")
+  })
+
+  it("unrecognised reasons (e.g. Normal events) → null", () => {
+    expect(extractEventSignal(evt({ reason: "Pulled" }))).toBeNull()
+    expect(extractEventSignal(evt({ reason: undefined }))).toBeNull()
+  })
+
+  it("resolves the service via the injected resolver (informer pod cache)", () => {
+    const s = extractEventSignal(
+      evt({ reason: "FailedMount" }),
+      (ns, name) => (ns === "prod" && name === "checkout-abc123" ? "checkout" : undefined)
+    )!
+    expect(s.service).toBe("checkout")
+    expect(s.source).toEqual({ kind: "Pod", name: "checkout-abc123" })
+  })
+
+  it("falls back to the object name when no resolver is given", () => {
+    expect(extractEventSignal(evt({ reason: "FailedMount" }))!.service).toBe("checkout-abc123")
   })
 })

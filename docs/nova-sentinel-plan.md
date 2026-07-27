@@ -122,9 +122,9 @@ domain:
       Secret/ConfigMap, keeps the message), `RunContainerError`/`Error`,
       `HighRestarts` (soft, leading indicator), `Unschedulable`. Deterministic,
       decoupled from the k8s client. **12 tests** with realistic fixtures.
-- [ ] **Event extraction** (`FailedMount`, `Unhealthy` probe, `BackOff`,
-      `FailedScheduling`, `FailedCreatePodSandBox`) — needs the informer's pod cache
-      for service resolution (next increment).
+- [x] **Event extraction** (`extractEventSignal`): `FailedMount`, `Unhealthy` probe,
+      `FailedScheduling`, `FailedCreatePodSandBox`, `BackOff` — with an injectable
+      `ServiceResolver` (informer pod cache maps object → service). 6 tests.
 - [ ] k8s **informer/watch** wiring that feeds real pods/events through the extractors.
 - [ ] rollout health: progress-deadline slipping.
 
