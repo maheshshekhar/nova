@@ -123,6 +123,12 @@ export const MetricsConfigSchema = z
   .object({
     provider: z.enum(["prometheus", "http", "none"]).default("http"),
     url: z.string().optional(),
+    // The Kubernetes metrics-collector endpoint. For provider `http` the collector
+    // IS the metrics source (so `url` points at it); for provider `prometheus` the
+    // collector enriches Prometheus with pod inventory (pod counts, crash state) —
+    // set `collectorUrl` for that. Resolved from CONFIG (never read from env at
+    // runtime) so nova-config.yaml is the single source of truth, like logs.
+    collectorUrl: z.string().optional(),
     // Prometheus adapter (provider: prometheus). Nova is only a PromQL CLIENT —
     // it queries an existing Prometheus, it never scrapes. The queries below are
     // config-driven so the adapter stays domain-agnostic: each entry maps a

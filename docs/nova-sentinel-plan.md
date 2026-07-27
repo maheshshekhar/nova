@@ -25,13 +25,15 @@
 
 ## Part A — Config simplification (immediate, small)
 
-### A1. Metrics = single source of truth (match logs)  ⬜
-- [ ] `app/api/metrics/route.ts`: resolve the collector URL from **config**, not
-      `process.env.METRICS_COLLECTOR_URL` directly (the env stays only as the
-      `${...}` interpolation default in `nova-config.yaml`).
-- [ ] Schema: make the k8s/collector endpoint a real config field so the `http`
+### A1. Metrics = single source of truth (match logs)  ✅
+- [x] `app/api/metrics/route.ts`: resolves the collector URL from **config** via
+      `resolveCollectorUrl()`, not `process.env.METRICS_COLLECTOR_URL` directly (the
+      env stays only as the `${...}` interpolation default in `nova-config.yaml`).
+- [x] Schema: added `metrics.collectorUrl` — a real config field so the `http`
       path reads config like the `prometheus` path already does.
-- [ ] Tests: `http` provider reads config; behaviour-neutral defaults; example yaml.
+- [x] Tests: `lib/metrics/collector-url.ts` resolver (5) — http uses `url`,
+      prometheus uses `collectorUrl` (never the prometheus url), defaults, and a
+      guard that it never reads `process.env`. 408 total green, tsc clean, build OK.
 
 ### A2. Reframe the provider model to "what you have"  ⬜
 - [ ] Providers read as: `prometheus` ("I have Prometheus" → RED metrics),
