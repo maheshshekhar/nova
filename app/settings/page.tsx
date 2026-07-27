@@ -2,12 +2,16 @@ import { getConfig } from "@/lib/config/loader"
 import { getDomain } from "@/lib/domain/loader"
 import { buildSettingsView } from "@/lib/settings/view"
 import { SettingsPanels } from "@/components/settings/settings-panels"
+import { SignalsPanel } from "@/components/settings/signals-panel"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 // Config is read at request time (files + env), so render dynamically.
 export const dynamic = "force-dynamic"
 
 export default function SettingsPage() {
-  const view = buildSettingsView(getConfig(), getDomain(), process.env)
+  const config = getConfig()
+  const view = buildSettingsView(config, getDomain(), process.env)
+  const pinnedKeys = Object.keys(config.metrics.queries ?? {})
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-10">
@@ -18,7 +22,19 @@ export default function SettingsPage() {
           never shown here — only whether they are set.
         </p>
       </header>
-      <SettingsPanels view={view} />
+
+      <Tabs defaultValue="configuration">
+        <TabsList>
+          <TabsTrigger value="configuration">Configuration</TabsTrigger>
+          <TabsTrigger value="signals">Signals</TabsTrigger>
+        </TabsList>
+        <TabsContent value="configuration" className="pt-4">
+          <SettingsPanels view={view} />
+        </TabsContent>
+        <TabsContent value="signals" className="pt-4">
+          <SignalsPanel pinnedKeys={pinnedKeys} provider={config.metrics.provider} />
+        </TabsContent>
+      </Tabs>
     </main>
   )
 }

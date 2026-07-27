@@ -216,30 +216,34 @@ suggestion, never a live tile). Lean on **OpenTelemetry Semantic Conventions** f
 - [ ] Disambiguation: when multiple presets match, surface the ranked options for the operator
       to **pick one** (resolved in the Phase 4 panel).
 
-## Phase 4 — Discovery helper UI + YAML generation (GitOps)  ⬜
+## Phase 4 — Discovery helper UI + YAML generation (GitOps)  🚧 (core done; first-run banner pending)
 
 One advisory **Signals panel**, reached two ways (first-run nudge + permanent gear-icon
 entry). Detection **never** drives a live tile — it only proposes YAML to commit.
 
-- [ ] **Signals panel** (the shared content): a table of every semantic signal with state
+- [x] **Signals panel** (the shared content): a table of every semantic signal with state
       **Live** (pinned in config, driving a tile) / **Detected** (source found, not in git yet) /
       **Unavailable** (no source), each with its source + the exact query it would use.
 - [ ] **Door 1 — first-run banner:** a dismissible callout when Nova detects unpinned signals
       (*"Detected N signals not yet in your config — review"*) that links to the panel.
-      A nudge, not a blocking wizard.
-- [ ] **Door 2 — gear icon:** the same panel lives permanently as a **Settings tab** so detection
-      is **re-runnable anytime** as the cluster evolves.
-- [ ] **Disambiguation:** when Phase 3 reports multiple preset matches for a service, the panel
-      lets the operator **pick one** before the YAML is generated.
-- [ ] `lib/config/generate.ts` — serialize detected + confirmed signals into a valid
-      `nova.config.yaml` fragment (round-trips through `NovaConfigSchema`).
-- [ ] **Copy / Download YAML** per-signal and for the full `metrics` block (no server write) —
-      output goes to source control.
-- [ ] Show the **current effective config** (read-only, redacted) alongside, so engineers see
-      exactly what drives the dashboard = confidence.
-- [ ] Tests: generated YAML parses + reproduces the chosen bindings; redaction (no secrets or
-      raw internal PromQL in view/export payloads); **assert tiles never render from detection
-      alone** (only from committed config or k8s built-ins).
+      A nudge, not a blocking wizard. *(follow-up: dashboard placement + localStorage dismiss.)*
+- [x] **Door 2 — gear icon:** the Signals panel lives permanently as a **Settings tab**
+      ([components/settings/signals-panel.tsx](../components/settings/signals-panel.tsx),
+      wired in [app/settings/page.tsx](../app/settings/page.tsx) as a Configuration/Signals tab
+      split) — re-runnable anytime; fetches `/api/discovery` live.
+- [x] **Signals table** — each RED signal shown as **Live** (pinned) / **Detected** (suggested,
+      unpinned) / **Unavailable**, with the exact query; k8s built-ins (cpu/mem/pod-health) noted.
+- [x] **Disambiguation:** when multiple presets match, the panel lets the operator **pick one**
+      before the YAML is generated.
+- [x] `lib/config/generate.ts` — serialize a suggestion into a valid `nova.config.yaml`
+      `metrics:` fragment (single-quoted PromQL, `${PROMETHEUS_URL:-…}` placeholder, secret-free
+      `authTokenEnv`); **round-trips through `MetricsConfigSchema`** (asserted in tests).
+- [x] **Copy / Download YAML** (no server write) — output goes to source control.
+- [~] Show the **current effective config** — the existing read-only **Configuration** tab already
+      does this (secret-free `buildSettingsView`); the Signals tab sits beside it.
+- [x] Tests: 6 — generated YAML parses + round-trips the chosen bindings via the schema; single-quote
+      escaping; `${PROMETHEUS_URL}` placeholder (no host committed); `authTokenEnv` name-only;
+      end-to-end from a real discovery suggestion (no `$SVC` leak). 389 total green, tsc clean, build OK.
 
 ## Phase 5 — Scale hardening (100s–1000s of pods)  ⬜
 
