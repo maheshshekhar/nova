@@ -142,11 +142,20 @@ domain:
 - [ ] **Leading indicators** ("tell before"): restarts *accelerating*, memory
       *approaching* limit — a later refinement (soft signals already cover the base case).
 
-### B3. Incident creation with evidence (no auto-RCA)  ⬜
-- [ ] Open an incident carrying the **evidence** (the signals + samples) and a
-      human "why flagged" summary. No LLM on the hot path.
+### B3. Incident creation with evidence (no auto-RCA)  🚧
+- [x] `decisionToAlert()` (`lib/sentinel/incident.ts`) — pure map from a correlator
+      `IncidentDecision` to an Alertmanager-shaped payload (severity + failure_type +
+      `source: nova-sentinel` provenance; evidence signals in the description). No LLM.
+- [x] `collectSignals()` (`lib/sentinel/pipeline.ts`) — pure glue: pods+events →
+      extractors → signals (fed to the `Correlator`).
+- [x] `IncidentSink` + `HttpAlertSink` (`lib/sentinel/sink.ts`) — Sentinel POSTs to the
+      **existing** `/api/alerts` pipeline, reusing its per-service idempotency, incident
+      store and notifications. Sentinel "sits beside" external alerts on the same path.
+- [x] Tests: mapping (failure types, hard-signal primary, evidence), end-to-end
+      pod→decision, sink post/no-op/error (`lib/sentinel/worker.test.ts`).
 - [ ] Ensure the existing **"Analyse with AI"** action consumes that evidence with
       `prompts/rca.md` on demand.
+- [ ] Informer worker loop + companion Deployment (RBAC, dry-run) — final B0 increment.
 
 ### B4. Tier 2 — Log signals by *anomaly*, not keyword  ⬜
 - [ ] Continuous log tail (Loki `tail` / k8s stream) into a rolling window.
