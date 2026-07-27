@@ -118,3 +118,57 @@ function dedupeByKind(signals: Signal[]): Signal[] {
   }
   return out
 }
+
+// ── Event → Signal ────────────────────────────────────────────────────────────
+// Kubernetes Events catch things pod status alone doesn't surface well: failed
+// volume/secret mounts, probe failures, scheduling failures, sandbox/network
+// errors. An Event references an object (usually a Pod) but not its labels, so
+// the caller passes a `ServiceResolver` (backed by the informer's pod cache) to
+// map object → service; without one we fall back to the object name.
+
+export interface EventLike {
+  reason?: string
+  message?: string
+  type?: string // "Normal" | "Warning"
+  involvedObject?: { kind?: string; name?: string; namespace?: string }
+}
+
+export type ServiceResolver = (
+  namespace: string,
+  objectName: string,
+  objectKind?: string
+) => string | undefined
+
+const EVENT_MAP: Record<string, { kind: string; severity: SignalSeverity; hard: boolean }> = {
+  FailedMount: { kind: "FailedMount", severity: "critical", hard: true },
+  Unhealthy: { kind: "ProbeFailure", severity: "warning", hard: false },
+  FailedScheduling: { kind: "FailedScheduling", severity: "warning", hard: false },
+  FailedCreatePodSandBox: { kind: "SandboxError", severity: "critical", hard: true },
+  BackOff: { kind: "BackOff", severity: "warning", hard: false },
+}
+
+export function extractEventSignal(
+  event: EventLike,
+  resolveService?: ServiceResolver
+): Signal | null {
+  const reason = event.reason
+  if (!reason) return null
+  const mapped = EVENT_MAP[reason]
+  if (!mapped) return null
+
+  const io = event.involvedObject
+  const namespace = io?.namespace ?? "default"
+  const objectName = io?.name ?? "unknown"
+  const service = resolveService?.(namespace, objectName, io?.kind) ?? objectName
+  const detail = event.message ? `: ${event.message}` : ""
+
+  return {
+    kind: mapped.kind,
+    service,
+    namespace,
+    severity: mapped.severity,
+    hard: mapped.hard,
+    message: `${reason}${detail}`,
+    source: { kind: io?.kind ?? "Event", name: objectName },
+  }
+}
