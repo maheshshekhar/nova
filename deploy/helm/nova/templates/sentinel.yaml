@@ -1,0 +1,108 @@
+{{- if .Values.sentinel.enabled }}
+{{- $name := printf "%s-sentinel" (include "nova.fullname" .) }}
+# ── Nova Sentinel — zero-instrumentation early-detection companion ──
+# Watches Kubernetes Pods + Events (read-only) and opens evidenced incidents in
+# Nova via its /api/alerts pipeline BEFORE Prometheus alerts fire. It sits beside
+# your existing tooling; it never mutates the cluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "nova.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sentinel
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "nova.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sentinel
+# Strictly read-only: list/watch the objects Sentinel derives signals from.
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "events", "nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "nova.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sentinel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "nova.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sentinel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "nova.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: sentinel
+  template:
+    metadata:
+      labels:
+        {{- include "nova.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: sentinel
+    spec:
+      serviceAccountName: {{ $name }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+      containers:
+        - name: sentinel
+          image: "{{ .Values.sentinel.image.repository }}:{{ .Values.sentinel.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.sentinel.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: NOVA_URL
+              value: {{ .Values.sentinel.novaUrl | default (printf "http://%s:%v" (include "nova.fullname" .) .Values.service.port) | quote }}
+            - name: SENTINEL_NAMESPACES
+              value: {{ join "," .Values.sentinel.namespaces | quote }}
+            - name: SENTINEL_DRY_RUN
+              value: {{ .Values.sentinel.dryRun | quote }}
+            - name: SENTINEL_WINDOW_MS
+              value: {{ .Values.sentinel.windowMs | quote }}
+            - name: SENTINEL_SOFT_CONFIRM
+              value: {{ .Values.sentinel.softConfirmKinds | quote }}
+            {{- with .Values.sentinel.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.sentinel.resources | nindent 12 }}
+      {{- with .Values.sentinel.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.sentinel.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.sentinel.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

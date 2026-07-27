@@ -54,6 +54,37 @@ extraEnv: []
 #  - name: NODE_ENV
 #    value: production
 
+# ── Nova Sentinel (zero-instrumentation early-detection companion) ──
+# A separate read-only Deployment that watches Kubernetes Pods + Events and opens
+# evidenced incidents in Nova (via /api/alerts) before Prometheus alerts fire.
+# Disabled by default; enable it once you have built + pushed the sentinel image
+# (see deploy/sentinel/Dockerfile).
+sentinel:
+  enabled: false
+  image:
+    repository: ghcr.io/your-org/nova-sentinel
+    tag: "" # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+  # Base URL of the Nova dashboard. Defaults to the in-cluster Service.
+  novaUrl: ""
+  # Namespaces to watch. Empty = all namespaces (needs the cluster-wide RBAC below).
+  namespaces: []
+  # Start in dry-run to observe what Sentinel WOULD open without creating incidents.
+  dryRun: false
+  windowMs: 600000 # correlation window (10 min)
+  softConfirmKinds: 2 # distinct soft signal kinds required to confirm
+  extraEnv: []
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      cpu: 250m
+      memory: 192Mi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
 # ── Persistence (the file store lives here; use a real backend to avoid a PVC) ──
 persistence:
   enabled: true
