@@ -177,7 +177,11 @@ domain:
       (numbers, UUIDs, IPs, timestamps, hex, quoted strings); `LogTemplateMiner`
       learns per-service templates silently during warm-up, then flags a
       never-seen shape as novel (no `ERROR` keyword required). LRU-bounded.
-- [ ] **Volume / rate-shift** detection per service. *(next)*
+- [x] **Volume / rate-shift** detection per service (`lib/sentinel/logs/rate.ts`):
+      `LogRateMonitor` buckets time per service and flags a bucket whose line
+      count (or error count, via the opportunistic `level`) exceeds a rolling
+      baseline by a factor — once per bucket, after a warm-up. Folded into
+      `LogAnalyzer` as a third soft lens.
 - [x] **Generic technical signature library** (`lib/sentinel/logs/signatures.ts`,
       config-extendable via `extraSignatures`): DB (pool exhausted, unavailable,
       deadlock, `SQLSTATE`), network (reset/refused/timeout/DNS/TLS), runtime
