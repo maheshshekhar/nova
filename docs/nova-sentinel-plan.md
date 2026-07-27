@@ -153,9 +153,22 @@ domain:
       store and notifications. Sentinel "sits beside" external alerts on the same path.
 - [x] Tests: mapping (failure types, hard-signal primary, evidence), end-to-end
       pod→decision, sink post/no-op/error (`lib/sentinel/worker.test.ts`).
+- [x] **Informer runtime** (`lib/sentinel/run.ts`) — watches Pods + Events with
+      `@kubernetes/client-node` informers (operator-grade, no polling), forwarding
+      each object to a pure, tested `SentinelEngine` (`lib/sentinel/engine.ts`).
+      `PodServiceIndex` (`lib/sentinel/service-index.ts`) resolves Event→service.
+      Recovery observed (healthy pod) re-arms detection. Env-driven config
+      (NOVA_URL / namespaces / dry-run / window / soft-confirm) — no server-only.
+- [x] **Companion Deployment** (`deploy/helm/nova/templates/sentinel.yaml`, gated by
+      `sentinel.enabled`) — separate pod, **read-only** RBAC (get/list/watch on
+      pods, events, nodes), hardened SecurityContext, dry-run mode. Image via
+      `deploy/sentinel/Dockerfile` (tsx runtime).
+- [x] Tests: `PodServiceIndex` + engine (open/dedup/event-resolve/dry-run/recovery)
+      in `lib/sentinel/engine.test.ts`. 454 tests green; helm renders clean.
 - [ ] Ensure the existing **"Analyse with AI"** action consumes that evidence with
       `prompts/rca.md` on demand.
-- [ ] Informer worker loop + companion Deployment (RBAC, dry-run) — final B0 increment.
+- [ ] Retire the custom `nova/metrics-collector` + its `url:` config line once
+      Sentinel is the detection backbone.
 
 ### B4. Tier 2 — Log signals by *anomaly*, not keyword  ⬜
 - [ ] Continuous log tail (Loki `tail` / k8s stream) into a rolling window.
