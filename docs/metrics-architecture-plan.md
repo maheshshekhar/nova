@@ -170,49 +170,51 @@ Mirror `lib/logs/` exactly.
       serviceLabel, bearer + endpoint, no-fabrication, error propagation; registry (4).
       Full suite green (333), clean typecheck, `next build` OK.
 
-## Phase 2 — Signal/capability model + honest tiles  ⬜
+## Phase 2 — Signal/capability model + honest tiles  ✅ (already on `main`)
 
-- [ ] `lib/signals/catalog.ts` — the semantic signal list + descriptors (unit,
-      thresholds, aggregation).
-- [ ] `lib/signals/resolve.ts` — the capability resolver (precedence above) →
-      `{ signal → capability }`.
-- [ ] `GET /api/capabilities` — read-only projection of resolved capabilities for the UI
-      (no raw PromQL leaves the server; secret-free, reuse `lib/settings/view.ts` redaction).
-- [ ] Tiles/charts bind to signals: `stats-bar.tsx`, `metrics-charts.tsx`
-      (`ErrorRateChart` + a real `LatencyChart`), `service-health-table.tsx` columns.
-- [ ] **Delete synthetic p99** (`rate * 1.35` in `lib/metrics-series.ts`); latency renders
-      only from a real `histogram_quantile` binding, empty-state otherwise.
-- [ ] Hybrid merge: real k8s pod-health/CPU/mem overlaid with real RED metrics keyed by
-      `serviceLabel`.
-- [ ] Tests: resolver precedence; tile shows/hides by capability state; no-fabrication assertion.
+**Audit finding (2026-07-27):** `main` already delivers Phase 2's substance, so the
+formal `lib/signals/` layer is **intentionally not built** — it would duplicate
+[lib/metrics/descriptors.ts](../lib/metrics/descriptors.ts). What exists on `main`:
 
-## Phase 3 — Discovery engine (auto-detect any source)  ⬜
+- [x] **No synthetic p99** — `lib/metrics-series.ts` `ErrorPoint` is `{ time, rate }`
+      (real error rate only, EMA-smoothed; no `rate * 1.35`, no latency fabrication).
+- [x] **Descriptor catalog** = [lib/metrics/descriptors.ts](../lib/metrics/descriptors.ts):
+      14 descriptors (label/unit/format/viz/thresholds) + `evaluateHealth()` + a generic
+      fallback + `NUMERIC_METRIC_KEYS`. This is the signal-descriptor layer.
+- [x] **Honest, capability-bound tiles** — `LatencyChart` shows an empty state when no
+      latency source; `service-health-table.tsx` presence-filters latency/RPS columns;
+      `stats-bar.tsx` renders real aggregates + config `stats.tiles` (metric/PromQL).
+- [x] **Hybrid merge** — [lib/metrics/inventory.ts](../lib/metrics/inventory.ts)
+      (`mergeServiceSources` / `collectorServicesFromPayload`) overlays real Prometheus RED
+      on real k8s pod-health/CPU/mem.
+- [~] The only deferred bit — a `/api/capabilities` state projection — is folded into the
+      discovery report + Signals panel (Phases 3–4), where it is actually consumed.
 
-**Preset strategy = ship broad, tiered, standard-first, and as versioned declarative
-data.** Presets are YAML (not code): each carries a **fingerprint** (the metric names it
-needs) so detection is just *"do these series exist?"* + a **confidence score**, and each
-maps those metrics → PromQL for the semantic signals. Broad is safe here **only because
-detection is advisory** (a wrong match is a reviewable suggestion, never a live tile).
-Lean on **OpenTelemetry Semantic Conventions** as the primary standard.
+## Phase 3 — Discovery engine (auto-detect any source)  🚧 (core built)
 
-- [ ] `lib/discovery/kubernetes.ts` — read-only probe of namespaces, workloads, and
-      `ServiceMonitor`/`PodMonitor` + Prometheus/Grafana Services (find the Prom URL).
-- [ ] `lib/discovery/presets/` — **versioned declarative preset library** (YAML + fingerprint
-      + PromQL map + preset schema/loader + `presetVersion`), shipped in tiers:
-      - **Tier 1 (must):** OTel/RED semconv · kube-state-metrics · cAdvisor/node-exporter.
-      - **Tier 2 (front door — RED without app changes):** Istio · Linkerd · nginx-ingress · Envoy.
-      - **Tier 3 (additive):** JVM/Micrometer · Go client · Node `prom-client` · Postgres/MySQL.
-- [ ] `lib/discovery/prometheus-fingerprint.ts` — query `/api/v1/label/__name__/values`
-      and `/api/v1/targets`; match against the preset library; return **all** matches with
-      confidence scores (not just the first).
-- [ ] Disambiguation: when multiple presets match a service (e.g. Istio + app `prom-client`),
-      surface the ranked options for the operator to **pick one** (resolved in the Phase 4 panel).
-- [ ] `lib/discovery/logs.ts` — reachability + label discovery (reuse `logs.discovery`).
-- [ ] `lib/discovery/report.ts` — produce a **Discovery Report**
-      `{ detected sources, matched presets + confidence, suggested queries, gaps }`.
-- [ ] `GET /api/discovery` — server-side, allowlisted, cached.
-- [ ] Tests: per-preset fingerprint→match + generated PromQL (fixtures per exporter);
-      multi-match ranking; report shape; graceful partial detection; preset-schema validation.
+**Preset strategy = ship broad, tiered, standard-first, versioned declarative data.**
+Each preset carries a **fingerprint** (the metric names it needs) so detection is just
+*"do these series exist?"* + a **confidence score**, and maps those metrics → PromQL.
+Broad is safe **only because detection is advisory** (a wrong match is a reviewable
+suggestion, never a live tile). Lean on **OpenTelemetry Semantic Conventions** first.
+
+- [x] `lib/discovery/presets.ts` — **typed declarative preset library** (compile-checked,
+      test-covered; `$SVC` expansion, latency normalised to ms, `version` per preset).
+      Shipped: **OTel HTTP semconv · generic RED (`http_requests_total`) · Istio · NGINX
+      ingress**. (More exporters — Linkerd/Envoy/JVM/DB, and cAdvisor/KSM infra — are additive.)
+- [x] `lib/discovery/fingerprint.ts` — `fetchMetricNames()` (GET
+      `/api/v1/label/__name__/values`, bearer-aware), pure `matchPresets()` (ranked by
+      confidence, respects `all`/`any`), `expandQueries()`, `buildReport()`.
+- [x] `GET /api/discovery` — server-side, SSRF-safe (host from `metrics.url` only), returns
+      a ranked `DiscoveryReport` of ready-to-commit `metrics.queries`. Advisory only.
+- [x] Tests: 14 — per-exporter fingerprint match, ranking, `all`-required, `$SVC`
+      expansion + label override, report assembly, `fetchMetricNames` (success/bearer/error).
+- [ ] `lib/discovery/kubernetes.ts` — read-only probe to auto-find the Prometheus URL
+      (`ServiceMonitor`/`PodMonitor` + Prometheus Services) instead of requiring `metrics.url`.
+- [ ] `lib/discovery/logs.ts` — log-source reachability + label discovery (reuse `logs.discovery`).
+- [ ] Broaden the preset library (Tier 1 infra: kube-state-metrics/cAdvisor; Tier 2/3 the rest).
+- [ ] Disambiguation: when multiple presets match, surface the ranked options for the operator
+      to **pick one** (resolved in the Phase 4 panel).
 
 ## Phase 4 — Discovery helper UI + YAML generation (GitOps)  ⬜
 
