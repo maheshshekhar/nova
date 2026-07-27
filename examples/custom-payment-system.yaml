@@ -1,0 +1,569 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Custom Payment System — consolidated demo workload
+#
+# A single, self-contained manifest for Nova's bundled payment demo: a Postgres
+# with a deliberately tiny connection pool, a payment-service that exhausts it
+# under load, plus config-service and transaction-service that cascade. This is
+# ONE example workload behind Nova's agnostic adapters — the same class as
+# OpenTelemetry Demo / Online Boutique / Sock Shop.
+#
+# Deploy via: examples/kind-demo/scripts/deploy-reference-apps.sh → "Custom
+# Payment System". That option builds + kind-loads the nova/* images, installs
+# this demo's OWN observability stack (Loki, Fluent Bit, Prometheus/Grafana) into
+# the payment-monitoring namespace, applies this file, then points Nova at it.
+#
+# The dashboard RBAC below references the Nova dashboard's ServiceAccount
+# (dashboard-sa in nova-monitoring), so the Nova dashboard must already be up.
+#
+# Images (built locally, loaded into KinD — never pulled):
+#   nova/payment-service:latest  nova/config-service:latest
+#   nova/transaction-service:latest  nova/metrics-collector:latest
+#   nova/load-generator:latest
+# ═══════════════════════════════════════════════════════════════════════════════
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    name: production
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: db-postgres
+  labels:
+    name: db-postgres
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: payment-monitoring
+  labels:
+    name: payment-monitoring
+
+# ── Postgres (db-postgres) — deliberately low max_connections ─────────────────
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: db-postgres
+data:
+  POSTGRES_DB: paymentdb
+  POSTGRES_USER: payment_svc
+  POSTGRES_PASSWORD: nova_password
+  # Critically low connection limit — causes exhaustion under load
+  POSTGRES_MAX_CONNECTIONS: "5"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: db-postgres
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_PASSWORD
+          command:
+            - docker-entrypoint.sh
+            - postgres
+            - -c
+            - max_connections=5
+            - -c
+            - log_connections=on
+            - -c
+            - log_disconnections=on
+            - -c
+            - log_min_duration_statement=100
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "payment_svc", "-d", "paymentdb"]
+            initialDelaySeconds: 5
+            periodSeconds: 3
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: db-postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+
+# ── payment-service (production) ──────────────────────────────────────────────
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+  namespace: production
+  labels:
+    app: payment-service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: payment-service
+  template:
+    metadata:
+      labels:
+        app: payment-service
+    spec:
+      containers:
+        - name: payment-service
+          image: nova/payment-service:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: DB_HOST
+              value: "postgres.db-postgres"
+            - name: DB_NAME
+              value: "paymentdb"
+            - name: DB_USER
+              value: "payment_svc"
+            - name: DB_PASSWORD
+              value: "nova_password"
+            - name: CONFIG_SERVICE_URL
+              value: "http://config-service"
+            - name: TRANSACTION_SERVICE_URL
+              value: "http://transaction-service"
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 2
+            failureThreshold: 1
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 6
+            periodSeconds: 2
+            failureThreshold: 2
+            timeoutSeconds: 2
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service
+  namespace: production
+spec:
+  selector:
+    app: payment-service
+  ports:
+    - port: 80
+      targetPort: 8080
+
+# ── config-service (production) ───────────────────────────────────────────────
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: config-service
+  namespace: production
+  labels:
+    app: config-service
+spec:
+  replicas: 2
+  strategy:
+    # Recreate so an injected bad config takes ALL pods down at once (clearly
+    # "critical" on the dashboard) instead of leaving old healthy pods up.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: config-service
+  template:
+    metadata:
+      labels:
+        app: config-service
+    spec:
+      containers:
+        - name: config-service
+          image: nova/config-service:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: FEATURE_FLAGS_URL
+              value: "http://config-service/flags"
+          resources:
+            requests:
+              memory: "48Mi"
+              cpu: "25m"
+            limits:
+              memory: "96Mi"
+              cpu: "100m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: config-service
+  namespace: production
+spec:
+  selector:
+    app: config-service
+  ports:
+    - port: 80
+      targetPort: 8080
+
+# ── transaction-service (production) ──────────────────────────────────────────
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transaction-service
+  namespace: production
+  labels:
+    app: transaction-service
+spec:
+  replicas: 2
+  strategy:
+    # Recreate so a failure/restart cycles all pods together (clean down → up).
+    type: Recreate
+  selector:
+    matchLabels:
+      app: transaction-service
+  template:
+    metadata:
+      labels:
+        app: transaction-service
+    spec:
+      containers:
+        - name: transaction-service
+          image: nova/transaction-service:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: DB_HOST
+              value: "postgres.db-postgres"
+            - name: DB_NAME
+              value: "paymentdb"
+            - name: DB_USER
+              value: "payment_svc"
+            - name: DB_PASSWORD
+              value: "nova_password"
+            # Upstream whose health this service's readiness mirrors (Nova demo
+            # cascade). transaction-service goes NotReady when payment-service is in
+            # incident and auto-recovers when it's healthy again.
+            - name: PAYMENT_SERVICE_URL
+              value: "http://payment-service"
+          resources:
+            requests:
+              memory: "48Mi"
+              cpu: "25m"
+            limits:
+              memory: "96Mi"
+              cpu: "100m"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 2
+            failureThreshold: 2
+            successThreshold: 1
+            timeoutSeconds: 1
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: transaction-service
+  namespace: production
+spec:
+  selector:
+    app: transaction-service
+  ports:
+    - port: 80
+      targetPort: 8080
+
+# ── metrics-collector (payment-monitoring) ────────────────────────────────────
+# Cluster-wide pod/namespace reader that backs Nova's /api/metrics for this demo.
+# Lives in the demo's own monitoring namespace; Nova is pointed at it by the
+# deploy script (LOKI_URL / METRICS_COLLECTOR_URL → *.payment-monitoring).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: metrics-collector
+  namespace: payment-monitoring
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: metrics-collector
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: metrics-collector
+subjects:
+  - kind: ServiceAccount
+    name: metrics-collector
+    namespace: payment-monitoring
+roleRef:
+  kind: ClusterRole
+  name: metrics-collector
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metrics-collector
+  namespace: payment-monitoring
+  labels:
+    app: metrics-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: metrics-collector
+  template:
+    metadata:
+      labels:
+        app: metrics-collector
+    spec:
+      serviceAccountName: metrics-collector
+      containers:
+        - name: metrics-collector
+          image: nova/metrics-collector:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 3001
+          env:
+            - name: PORT
+              value: "3001"
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: metrics-collector
+  namespace: payment-monitoring
+spec:
+  selector:
+    app: metrics-collector
+  ports:
+    - port: 3001
+      targetPort: 3001
+
+# ── Loki ruler rules (payment-monitoring) — payment-specific log detection ─────
+# Mounted (optionally) into this demo's Loki at /etc/loki/rules/fake. The deploy
+# option restarts Loki after applying so the ruler picks these up.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-rules
+  namespace: payment-monitoring
+  labels:
+    app: loki
+data:
+  rules.yaml: |
+    groups:
+      - name: nova-log-alerts
+        interval: 15s
+        rules:
+          - alert: PaymentServiceErrorSpike
+            expr: |
+              sum(count_over_time({namespace="production", app="payment-service"} |~ "(?i)(503 Service Unavailable|too many connections|waitQueueSize exceeded|pool exhausted|checkout aborted)" [1m])) > 20
+            for: 0s
+            labels:
+              service: payment-service
+              severity: critical
+              failure_type: db-pool-exhaustion
+            annotations:
+              summary: "payment-service — checkout failures detected in logs"
+              description: "Sustained ERROR/503 log spike for payment-service over the last minute (Loki ruler)."
+
+          - alert: ConfigServiceBootFailure
+            expr: |
+              sum(count_over_time({namespace="production", app="config-service"} |~ "(?i)(missing required|ERROR|fatal|boot failure)" [1m])) > 5
+            for: 0s
+            labels:
+              service: config-service
+              severity: high
+              failure_type: config-missing
+            annotations:
+              summary: "config-service — boot failure detected in logs"
+              description: "config-service is logging missing-config / fatal errors (Loki ruler)."
+
+# ── Dashboard RBAC into production — inject / remediate the payment workloads ──
+# The dashboard's ServiceAccount (dashboard-sa) is created by the monitoring
+# platform in nova-monitoring; these production-scoped grants let its /api/inject
+# and /api/remediate routes drive the payment demo.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dashboard-role
+  namespace: production
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # Deployments — the /api/remediate route rolls / restores / scales
+  # config-service and transaction-service on runbook approval.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "patch", "update"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dashboard-rolebinding
+  namespace: production
+subjects:
+  - kind: ServiceAccount
+    name: dashboard-sa
+    namespace: nova-monitoring
+roleRef:
+  kind: Role
+  name: dashboard-role
+  apiGroup: rbac.authorization.k8s.io
+
+# ── load-generator (production) — DISABLED BY DEFAULT ─────────────────────────
+# This k6 Job is the FAILURE TRIGGER, not baseline traffic: 120 VUs with no sleep
+# saturate payment-service until the Postgres pool (max_connections=5) is
+# exhausted, cascading into transaction-service. Deploying it would break the
+# system on startup, so it is left commented out. Trigger the cascade on demand
+# with examples/kind-demo/scripts/inject-failure, or uncomment below and
+# re-apply.
+#
+# ---
+# apiVersion: batch/v1
+# kind: Job
+# metadata:
+#   name: load-generator
+#   namespace: production
+# spec:
+#   template:
+#     metadata:
+#       labels:
+#         app: load-generator
+#     spec:
+#       restartPolicy: Never
+#       containers:
+#         - name: k6
+#           image: nova/load-generator:latest
+#           imagePullPolicy: Never
+#           env:
+#             - name: TARGET_URL
+#               value: "http://payment-service/api/checkout"

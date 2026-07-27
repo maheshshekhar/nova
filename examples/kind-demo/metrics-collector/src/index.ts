@@ -283,32 +283,42 @@ async function collectPodMetrics(): Promise<void> {
 
 // ── Deployment collector ─────────────────────────────────────────────────────
 
-const DEPLOY_NAMESPACES = ["production", "nova-monitoring", "db-postgres"]
+// Deployments are gathered cluster-wide so any workload (OTel demo, Boutique,
+// Sock Shop, the bundled payment system, …) shows up in Nova's Recent
+// Deployments widget without per-demo configuration. Kubernetes' own control-
+// plane / add-on namespaces are skipped so the list stays workload-focused.
+const SYSTEM_NAMESPACES = new Set([
+  "kube-system",
+  "kube-public",
+  "kube-node-lease",
+  "local-path-storage",
+])
 
 async function collectDeployments(): Promise<void> {
   try {
     const all: DeploymentInfo[] = []
-    for (const ns of DEPLOY_NAMESPACES) {
-      let list
-      try {
-        list = await appsApi.listNamespacedDeployment(ns)
-      } catch {
-        continue
-      }
-      for (const d of list.body.items) {
-        const name = d.metadata?.name || "unknown"
-        const image = d.spec?.template?.spec?.containers?.[0]?.image || ""
-        const version = image.includes(":") ? image.split(":").pop()! : "latest"
-        const replicas = d.spec?.replicas ?? 0
-        const ready = d.status?.readyReplicas ?? 0
-        const updatedAt =
-          d.status?.conditions?.find((c) => c.type === "Progressing")?.lastUpdateTime?.toString() ||
-          d.metadata?.creationTimestamp?.toString() ||
-          new Date().toISOString()
-        const status: DeploymentInfo["status"] =
-          ready === 0 && replicas > 0 ? "failed" : ready < replicas ? "running" : "success"
-        all.push({ name, namespace: ns, image, version, replicas, readyReplicas: ready, status, updatedAt })
-      }
+    let list
+    try {
+      list = await appsApi.listDeploymentForAllNamespaces()
+    } catch (err) {
+      console.error("Failed to list deployments:", err)
+      return
+    }
+    for (const d of list.body.items) {
+      const ns = d.metadata?.namespace || "default"
+      if (SYSTEM_NAMESPACES.has(ns)) continue
+      const name = d.metadata?.name || "unknown"
+      const image = d.spec?.template?.spec?.containers?.[0]?.image || ""
+      const version = image.includes(":") ? image.split(":").pop()! : "latest"
+      const replicas = d.spec?.replicas ?? 0
+      const ready = d.status?.readyReplicas ?? 0
+      const updatedAt =
+        d.status?.conditions?.find((c) => c.type === "Progressing")?.lastUpdateTime?.toString() ||
+        d.metadata?.creationTimestamp?.toString() ||
+        new Date().toISOString()
+      const status: DeploymentInfo["status"] =
+        ready === 0 && replicas > 0 ? "failed" : ready < replicas ? "running" : "success"
+      all.push({ name, namespace: ns, image, version, replicas, readyReplicas: ready, status, updatedAt })
     }
     all.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
     state.deployments = all

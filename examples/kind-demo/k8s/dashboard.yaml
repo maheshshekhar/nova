@@ -33,15 +33,14 @@ spec:
           ports:
             - containerPort: 3000
           env:
+            - name: NOVA_CONFIG
+              value: "/config/nova.config.yaml"
             - name: METRICS_COLLECTOR_URL
               value: "http://metrics-collector:3001"
             - name: LOKI_URL
               value: "http://loki:3100"
             - name: DATA_DIR
               value: "/data"
-            # Point Nova at the mounted config (switches metrics to Prometheus).
-            - name: NOVA_CONFIG
-              value: "/config/nova.config.yaml"
             - name: OPENROUTER_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -86,6 +85,7 @@ spec:
           hostPath:
             path: /mnt/dashboard-data
             type: DirectoryOrCreate
+        # nova.config.yaml (all-namespace log scope) — see k8s/nova-config.yaml.
         - name: nova-config
           configMap:
             name: nova-config
