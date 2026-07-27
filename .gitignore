@@ -30,3 +30,4 @@ docs/*
 !docs/notifications-plan.md
 !docs/mcp-adapters-plan.md
 !docs/metrics-architecture-plan.md
+!docs/nova-sentinel-plan.md
