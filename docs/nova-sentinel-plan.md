@@ -47,6 +47,43 @@ metrics; no `dashboard.yaml` env juggling; no split pointers.
 
 ## Part B — Nova Sentinel (the intelligent detection engine)
 
+### Where each piece lives — code vs config vs domain pack (READ FIRST)
+
+The intelligence **ships as code**; the engineer never configures the algorithms.
+Config is only for **opt-in + tuning + business-specific declarations**. Three layers:
+
+| Layer | Holds | Configured by engineer? |
+|---|---|---|
+| **Code (shipped in Nova)** | k8s signal catalog (B1), correlation/candidate→confirm engine (B2), incident+evidence builder (B3), anomaly engine + generic technical signature library (B4) | **No** — works out of the box |
+| **`nova-config.yaml` → `detection:`** | knobs: `enabled`, `dryRun`, `sensitivity`, `dedupeWindowSec`, per-source toggles, custom signature additions, absence baselines (B6) | **Optional** — sensible defaults |
+| **`domains/*.yaml` (Domain Packs)** | business meaning Nova can't know: impact patterns, `severityRules` (B5) | **Optional** — generic default ships |
+
+Per item: **B2, B3, B4 = code** (config exposes only `sensitivity`/`dedupeWindowSec`
+and optional signature additions). **B5 = domain pack + a little config** (business
+impact patterns + absence baselines). **B6 = the `detection:` schema** that surfaces
+the knobs. **With an empty config, B1–B3 still fully work** — zero-config detection.
+
+The complete surface an engineer would ever touch (all optional):
+
+```yaml
+# nova-config.yaml — knobs only; the intelligence is built-in
+detection:
+  enabled: true
+  dryRun: false               # detect but don't open incidents (tuning)
+  sensitivity: medium         # low | medium | high
+  dedupeWindowSec: 300
+  sources: { kubernetes: true, logs: true, metrics: true }
+  logSignatures:              # OPTIONAL: extend the shipped library
+    - { id: my-svc-quirk, pattern: "saga rollback", severity: high }
+  absence:                    # OPTIONAL: business KPIs (B5)
+    - { id: checkouts, signal: "checkout completed", dropPct: 80, windowSec: 300 }
+
+# domains/payments.yaml — OPTIONAL business meaning (B5)
+domain:
+  impactSignal: { match: { pattern: "5\\d\\d|pool.connect\\(\\) timeout" }, unit: "failed checkouts" }
+  severityRules: [ { when: { errorRatePct: ">5" }, severity: critical } ]
+```
+
 ### B0. Runtime architecture  ⬜
 - [ ] Ship a **companion Deployment `nova-sentinel`** (Node, shares `lib/` + config)
       in the Helm chart. **Always-on, watch-based — NOT a CronJob.**
