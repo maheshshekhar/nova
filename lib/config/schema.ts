@@ -200,6 +200,15 @@ export const DashboardConfigSchema = z
     // Per-metric threshold overrides (metric key → { warn, critical }) applied
     // on top of the descriptor defaults in lib/metrics/descriptors.ts.
     thresholds: z.record(ThresholdOverrideSchema).default({}),
+    // Scale controls for large clusters (100s–1000s of pods). `pollSec` throttles
+    // the live metrics poll; `topN` caps how many services the table renders
+    // (highest-severity first). Omit `topN` to render every service.
+    scale: z
+      .object({
+        pollSec: z.number().int().positive().default(3),
+        topN: z.number().int().positive().optional(),
+      })
+      .default({}),
   })
   .default({})
 export type DashboardConfig = z.infer<typeof DashboardConfigSchema>

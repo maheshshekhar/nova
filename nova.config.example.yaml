@@ -92,6 +92,10 @@ metrics:
 #   thresholds:
 #     errorRate: { warn: 1, critical: 5 }
 #     avgCpu:    { warn: 70, critical: 90 }
+#   # Scale controls for large clusters (100s–1000s of pods):
+#   scale:
+#     pollSec: 3                # live metrics poll cadence (raise to throttle big clusters)
+#     # topN: 100               # cap the service table to the worst-severity N (omit = all)
 
 # ── Detection & impact (generalises the checkout/503 counter) ────────────────
 detection:
