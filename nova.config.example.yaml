@@ -131,6 +131,7 @@ sentinel:
   logs:
     enabled: true              # tail pod logs for anomaly/signature/rate signals
     warmupLines: 50            # learn a service's normal templates before flagging novelty
+    maxConcurrentTails: 200    # cap concurrent pod-log streams (unhealthy pods tailed first)
     extraSignatures: []        # add your own: { kind, category, severity, hard, pattern }
     # - { kind: PaymentDeclined, category: database, severity: warning, hard: false, pattern: "payment declined" }
   # Declared business impact — a burst of this pattern is customer impact.

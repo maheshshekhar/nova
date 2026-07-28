@@ -17,6 +17,7 @@ import { useState, useEffect } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useTheme } from "next-themes"
+import { SentinelStatus } from "./sentinel-status"
 
 const navItems = [
   { label: "Overview", href: "/overview" },
@@ -179,6 +180,9 @@ export function Topbar() {
       </nav>
 
       <div className="ml-auto flex items-center gap-3">
+        {/* Nova Sentinel status */}
+        <SentinelStatus />
+
         {/* Live clock */}
         <div className="hidden sm:flex items-center gap-1.5 text-xs font-mono text-muted-foreground bg-secondary/60 px-2.5 py-1 rounded-md border border-border">
           <span className="w-1.5 h-1.5 rounded-full bg-[var(--neon-green)] animate-pulse" />

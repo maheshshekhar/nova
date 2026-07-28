@@ -7,6 +7,7 @@ import { HttpAlertSink } from "./sink"
 import { serviceNameFromLabels } from "./signal"
 import { parseLogLine } from "./logs/parse"
 import { buildSentinel, loadSentinelConfig } from "./config"
+import { TailScheduler, type OpenStream } from "./log-scheduler"
 import type { SentinelConfig } from "@/lib/config/schema"
 import type { EventLike, PodLike } from "./extract"
 
@@ -101,14 +102,22 @@ function runInformer<T extends k8s.KubernetesObject>(
   )
 }
 
+/** A pod "looks unhealthy" (and so its logs are prioritized for tailing) when a
+ * container is not ready, is waiting, or has been restarting. */
+function podLooksUnhealthy(pod: k8s.V1Pod): boolean {
+  const cs = pod.status?.containerStatuses ?? []
+  return cs.some((c) => c.ready === false || c.state?.waiting != null || (c.restartCount ?? 0) >= 3)
+}
+
 /** Tails the logs of in-scope pods, forwarding each parsed line to the engine.
- * One follow-stream per container; started when a pod is Running, aborted when
- * the pod is deleted. Only new logs (sinceSeconds) are read so historical lines
- * never open incidents. */
-function makeLogTailer(kc: k8s.KubeConfig, engine: SentinelEngine) {
+ * A bounded, priority-aware `TailScheduler` caps concurrent follow-streams (they
+ * are limited by the client/apiserver stream budget) and tails pods that already
+ * look unhealthy first. Only new logs (sinceSeconds) are read so historical lines
+ * never open incidents. For namespaces far larger than the cap, prefer a log
+ * backend; k8s-object + event detection always covers the whole scope. */
+function makeLogTailer(kc: k8s.KubeConfig, engine: SentinelEngine, maxConcurrent: number) {
   const logApi = new k8s.Log(kc)
-  const streams = new Map<string, Abortable | null>()
-  const wanted = new Set<string>() // keys that should stay tailed (for restart)
+  const meta = new Map<string, { namespace: string; name: string; container: string; service: string }>()
 
   function lineSink(service: string, namespace: string, pod: string): Writable {
     let buf = ""
@@ -127,32 +136,61 @@ function makeLogTailer(kc: k8s.KubeConfig, engine: SentinelEngine) {
     })
   }
 
-  // Open one follow-stream for a container; restart it only on a hard error
-  // (not a normal end/close) so a genuinely dropped stream recovers without
-  // thrashing a healthy one.
-  function tail(key: string, namespace: string, name: string, container: string, service: string): void {
+  // The scheduler injects this to actually open a stream. On close/error we wait
+  // a short backoff before freeing the slot (via onClosed) so a flapping stream
+  // can't spin — the scheduler then re-queues the key fairly behind other pods.
+  const open: OpenStream = (key, onClosed) => {
+    const m = meta.get(key)
+    if (!m) {
+      onClosed()
+      return { stop() {} }
+    }
+    let aborter: Abortable | null = null
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      setTimeout(onClosed, 5000)
+    }
     logApi
-      .log(namespace, name, container, lineSink(service, namespace, name), {
+      .log(m.namespace, m.name, m.container, lineSink(m.service, m.namespace, m.name), {
         follow: true,
         sinceSeconds: 2,
         timestamps: false,
       })
       .then(
         (req) => {
-          streams.set(key, req as unknown as Abortable)
-          const emitter = req as unknown as { on?: (e: string, cb: (arg?: unknown) => void) => void }
-          emitter.on?.("error", () => {
-            streams.delete(key)
-            if (wanted.has(key)) setTimeout(() => tail(key, namespace, name, container, service), 5000)
-          })
+          if (done) {
+            try {
+              ;(req as unknown as Abortable).abort()
+            } catch {
+              /* best effort */
+            }
+            return
+          }
+          aborter = req as unknown as Abortable
+          const emitter = req as unknown as { on?: (e: string, cb: () => void) => void }
+          emitter.on?.("error", finish)
+          emitter.on?.("close", finish)
         },
         (err) => {
-          streams.delete(key)
           log(`log tail failed for ${key}: ${err}`)
-          if (wanted.has(key)) setTimeout(() => tail(key, namespace, name, container, service), 5000)
+          finish()
         }
       )
+    return {
+      stop() {
+        done = true
+        try {
+          aborter?.abort()
+        } catch {
+          /* best effort */
+        }
+      },
+    }
   }
+
+  const scheduler = new TailScheduler(open, { maxConcurrent })
 
   return {
     start(pod: k8s.V1Pod): void {
@@ -161,12 +199,12 @@ function makeLogTailer(kc: k8s.KubeConfig, engine: SentinelEngine) {
       const name = pod.metadata?.name
       if (!namespace || !name) return
       const service = serviceNameFromLabels(pod.metadata?.labels, name)
+      const priority = podLooksUnhealthy(pod)
       for (const c of pod.spec?.containers ?? []) {
-        const key = `${namespace}/${name}/${c.name}`
-        if (wanted.has(key)) continue // already tailing / reserved
-        wanted.add(key)
-        streams.set(key, null) // reserve to avoid a double-start race
-        tail(key, namespace, name, c.name ?? "", service)
+        const container = c.name ?? ""
+        const key = `${namespace}/${name}/${container}`
+        meta.set(key, { namespace, name, container, service })
+        scheduler.add(key, priority)
       }
     },
     stop(pod: k8s.V1Pod): void {
@@ -174,18 +212,11 @@ function makeLogTailer(kc: k8s.KubeConfig, engine: SentinelEngine) {
       const name = pod.metadata?.name
       if (!namespace || !name) return
       const prefix = `${namespace}/${name}/`
-      for (const [key, req] of streams) {
+      for (const key of [...meta.keys()]) {
         if (!key.startsWith(prefix)) continue
-        wanted.delete(key)
-        try {
-          req?.abort()
-        } catch {
-          // best effort
-        }
-        streams.delete(key)
+        meta.delete(key)
+        scheduler.remove(key)
       }
-      // Also clear any reserved-but-not-yet-open keys for this pod.
-      for (const key of wanted) if (key.startsWith(prefix)) wanted.delete(key)
     },
   }
 }
@@ -213,7 +244,7 @@ export function start(): void {
     startupGraceMs: cfg.startupGraceSec * 1000,
     logger: log,
   })
-  const tailer = build.logsEnabled ? makeLogTailer(kc, engine) : null
+  const tailer = build.logsEnabled ? makeLogTailer(kc, engine, cfg.logs.maxConcurrentTails) : null
 
   const scopes = cfg.namespaces.length > 0 ? cfg.namespaces : [null]
   log(
@@ -261,6 +292,19 @@ export function start(): void {
     void engine.tick().catch((e) => log(`tick error: ${e}`))
   }, 60_000)
   tick.unref?.()
+
+  // Liveness heartbeat so the dashboard can show Sentinel status + mode.
+  const scope = cfg.namespaces.length ? cfg.namespaces.join(",") : "all"
+  const heartbeat = () => {
+    void fetch(`${novaUrl.replace(/\/$/, "")}/api/sentinel/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dryRun: cfg.dryRun, scope, logs: build.logsEnabled }),
+    }).catch(() => {})
+  }
+  heartbeat()
+  const hb = setInterval(heartbeat, 30_000)
+  hb.unref?.()
 }
 
 // Run when invoked directly (tsx lib/sentinel/run.ts).

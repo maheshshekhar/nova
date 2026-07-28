@@ -294,6 +294,9 @@ export const SentinelConfigSchema = z
         enabled: z.boolean().default(true),
         /** Lines a service must emit before novelty is reported. */
         warmupLines: z.number().int().nonnegative().default(50),
+        /** Max concurrent pod-log follow-streams (bounded by the client/apiserver
+         * stream budget; unhealthy pods are tailed first). */
+        maxConcurrentTails: z.number().int().positive().default(200),
         /** Deployment-supplied technical signatures (in addition to the built-ins). */
         extraSignatures: z.array(SentinelSignatureSchema).default([]),
       })
