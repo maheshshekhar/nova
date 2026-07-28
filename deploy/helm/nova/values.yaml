@@ -12,6 +12,13 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+# ── RBAC for the in-process metrics reader (default metrics.provider: kubernetes) ──
+# Creates a ServiceAccount + read-only ClusterRole (pods, namespaces, deployments,
+# metrics.k8s.io) so the dashboard can read cluster inventory directly — no external
+# metrics-collector sidecar. Set false if you use metrics.provider: prometheus/http/none.
+rbac:
+  create: true
+
 # ── Nova configuration (rendered to a ConfigMap → mounted at /app/nova.config.yaml) ──
 # This is the entire nova.config.yaml. Secrets stay OUT of here — reference them
 # with ${ENV_VAR} and provide the value via `secret` below. See nova.config.example.yaml.
