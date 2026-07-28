@@ -25,6 +25,8 @@ export interface SentinelAlert {
     /** Machine-readable confidence (0..1) and evidence for the dashboard. */
     nova_confidence: string
     nova_signals: string // JSON: { kind, message, severity, hard }[]
+    /** Present ("true") when an AI judge confirmed an ambiguous soft cluster. */
+    nova_judged?: string
   }
   startsAt: string
 }
@@ -103,6 +105,7 @@ export function decisionToAlert(decision: IncidentDecision, at: number = Date.no
       nova_signals: JSON.stringify(
         decision.signals.map((s) => ({ kind: s.kind, message: s.message, severity: s.severity, hard: s.hard }))
       ),
+      ...(decision.judged ? { nova_judged: "true" } : {}),
     },
     startsAt: new Date(at).toISOString(),
   }

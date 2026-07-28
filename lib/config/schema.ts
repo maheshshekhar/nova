@@ -316,6 +316,20 @@ export const SentinelConfigSchema = z
         label: z.string().default("successful requests"),
       })
       .default({}),
+    /** On-demand AI judgment for AMBIGUOUS soft-signal clusters — reasons over
+     * the signals that exist (never invents) and opens sub-threshold clusters
+     * only when it confirms. Opt-in; precision-first (any failure ⇒ hold). */
+    aiJudge: z
+      .object({
+        enabled: z.boolean().default(false),
+        /** Cost/storm cap: max AI judge calls per minute (0 = unlimited). */
+        maxPerMin: z.number().int().nonnegative().default(10),
+        /** Minimum judge confidence required to open an incident. */
+        minConfidence: z.number().min(0).max(1).default(0.6),
+        /** Min distinct soft kinds for a below-bar cluster to be worth judging. */
+        minSoftKinds: z.number().int().positive().default(1),
+      })
+      .default({}),
   })
   .default({})
 export type SentinelConfig = z.infer<typeof SentinelConfigSchema>

@@ -23,6 +23,25 @@ export interface IncidentDecision {
   confidence: number
   /** The evidence that triggered the incident (fed to the AI RCA step). */
   signals: Signal[]
+  /** True when an on-demand AI judge confirmed an otherwise sub-threshold soft
+   * cluster (rather than a hard signal or auto-corroboration). */
+  judged?: boolean
+}
+
+/** A soft-only cluster that sits BELOW the auto-confirm bar but has enough
+ * corroboration to be worth an on-demand judgment (never auto-opened). */
+export interface AmbiguousCluster {
+  service: string
+  namespace: string
+  /** The in-window soft signals that didn't reach `softConfirmKinds`. */
+  signals: Signal[]
+}
+
+export interface IngestResult {
+  /** Auto-confirmed incidents (hard signal, or enough distinct soft kinds). */
+  decisions: IncidentDecision[]
+  /** Soft-only clusters below the bar, surfaced for optional AI judgment. */
+  ambiguous: AmbiguousCluster[]
 }
 
 export interface CorrelatorOptions {
@@ -30,6 +49,9 @@ export interface CorrelatorOptions {
   windowMs?: number
   /** Distinct SOFT signal kinds required to confirm a soft-only incident (default 2). */
   softConfirmKinds?: number
+  /** Min distinct soft kinds for a below-bar cluster to be surfaced as ambiguous
+   * (worth an AI judgment). Default 1. Clusters with fewer are ignored. */
+  judgeMinSoftKinds?: number
   /** Injectable clock. */
   now?: () => number
 }
@@ -46,16 +68,19 @@ interface ServiceState {
 
 const DEFAULT_WINDOW_MS = 10 * 60 * 1000
 const DEFAULT_SOFT_CONFIRM = 2
+const DEFAULT_JUDGE_MIN_SOFT = 1
 
 export class Correlator {
   private readonly windowMs: number
   private readonly softConfirmKinds: number
+  private readonly judgeMinSoftKinds: number
   private readonly now: () => number
   private readonly state = new Map<string, ServiceState>()
 
   constructor(opts: CorrelatorOptions = {}) {
     this.windowMs = opts.windowMs ?? DEFAULT_WINDOW_MS
     this.softConfirmKinds = opts.softConfirmKinds ?? DEFAULT_SOFT_CONFIRM
+    this.judgeMinSoftKinds = opts.judgeMinSoftKinds ?? DEFAULT_JUDGE_MIN_SOFT
     this.now = opts.now ?? Date.now
   }
 
@@ -69,6 +94,16 @@ export class Correlator {
    * bar or the service already has an open incident).
    */
   ingest(signals: Signal[], at?: number): IncidentDecision[] {
+    return this.ingestDetailed(signals, at).decisions
+  }
+
+  /**
+   * Like {@link ingest}, but also surfaces soft-only clusters that sit BELOW the
+   * auto-confirm bar (`ambiguous`) so an optional AI judge can reason over them.
+   * Ambiguous clusters are NOT opened here — the caller decides via
+   * {@link confirmAmbiguous}.
+   */
+  ingestDetailed(signals: Signal[], at?: number): IngestResult {
     const t = at ?? this.now()
     const touched = new Set<string>()
 
@@ -84,22 +119,26 @@ export class Correlator {
     }
 
     const decisions: IncidentDecision[] = []
+    const ambiguous: AmbiguousCluster[] = []
     for (const k of touched) {
       const st = this.state.get(k)!
       // Prune signals that have aged out of the window.
       st.signals = st.signals.filter((x) => t - x.at <= this.windowMs)
       if (st.open) continue // dedup: one open incident per service
-      const decision = this.evaluate(st.signals)
+      const sigs = st.signals.map((x) => x.signal)
+      const decision = this.evaluate(sigs)
       if (decision) {
         st.open = true
         decisions.push(decision)
+        continue
       }
+      const cluster = this.ambiguousCluster(sigs)
+      if (cluster) ambiguous.push(cluster)
     }
-    return decisions
+    return { decisions, ambiguous }
   }
 
-  private evaluate(tracked: Tracked[]): IncidentDecision | null {
-    const sigs = tracked.map((x) => x.signal)
+  private evaluate(sigs: Signal[]): IncidentDecision | null {
     if (sigs.length === 0) return null
 
     const hasHard = sigs.some((s) => s.hard)
@@ -107,6 +146,21 @@ export class Correlator {
     const shouldOpen = hasHard || distinctSoftKinds >= this.softConfirmKinds
     if (!shouldOpen) return null
 
+    return this.buildDecision(sigs, hasHard ? 0.9 : 0.6)
+  }
+
+  /** A soft-only, below-the-bar cluster with enough corroboration to be judged. */
+  private ambiguousCluster(sigs: Signal[]): AmbiguousCluster | null {
+    if (sigs.length === 0) return null
+    if (sigs.some((s) => s.hard)) return null // a hard signal already auto-opens
+    const distinctSoftKinds = new Set(sigs.map((s) => s.kind)).size
+    if (distinctSoftKinds < this.judgeMinSoftKinds || distinctSoftKinds >= this.softConfirmKinds) {
+      return null
+    }
+    return { service: sigs[0].service, namespace: sigs[0].namespace, signals: sigs }
+  }
+
+  private buildDecision(sigs: Signal[], confidence: number, judged = false): IncidentDecision {
     const severity: SignalSeverity = sigs.some((s) => s.severity === "critical")
       ? "critical"
       : "warning"
@@ -115,10 +169,39 @@ export class Correlator {
       service: sigs[0].service,
       namespace: sigs[0].namespace,
       severity,
-      confidence: hasHard ? 0.9 : 0.6,
+      confidence,
       reason: `${kinds.join(", ")} on ${sigs[0].service}`,
       signals: sigs,
+      ...(judged ? { judged: true } : {}),
     }
+  }
+
+  /**
+   * Open an incident for a previously-ambiguous soft cluster that an AI judge
+   * confirmed. Builds the decision from the service's CURRENT in-window signals
+   * (guarding against a hard signal or auto-confirm having landed meanwhile) and
+   * de-dups via the same open-flag. Returns null if the service already opened,
+   * recovered, or no soft signals remain in the window.
+   */
+  confirmAmbiguous(
+    namespace: string,
+    service: string,
+    confidence: number,
+    reason: string,
+    at?: number
+  ): IncidentDecision | null {
+    const st = this.state.get(`${namespace}/${service}`)
+    if (!st || st.open) return null
+    const t = at ?? this.now()
+    st.signals = st.signals.filter((x) => t - x.at <= this.windowMs)
+    const sigs = st.signals.map((x) => x.signal)
+    if (sigs.length === 0) return null
+    if (sigs.some((s) => s.hard)) return null // a hard signal opens on its own path
+    st.open = true
+    const clamped = Math.max(0, Math.min(1, confidence))
+    const decision = this.buildDecision(sigs, clamped, true)
+    decision.reason = `${decision.reason} — AI-confirmed: ${reason}`
+    return decision
   }
 
   /** Clear a service's state so it can flag again after recovery. */

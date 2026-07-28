@@ -32,6 +32,7 @@ export function buildSentinel(cfg: SentinelConfig, now?: () => number): Sentinel
   const correlator = new Correlator({
     windowMs: cfg.dedupeWindowSec * 1000,
     softConfirmKinds: cfg.softConfirmKinds,
+    judgeMinSoftKinds: cfg.aiJudge.minSoftKinds,
     now,
   })
 
