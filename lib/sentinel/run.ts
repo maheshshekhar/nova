@@ -10,7 +10,7 @@ import { buildSentinel, loadSentinelConfig } from "./config"
 import { TailScheduler, type OpenStream } from "./log-scheduler"
 import { parseQuantity } from "./quantity"
 import type { SentinelConfig } from "@/lib/config/schema"
-import type { EventLike, PodLike } from "./extract"
+import type { EventLike, PodLike, DeploymentLike } from "./extract"
 
 // Each tailed pod holds ONE long-lived follow-stream open. Lift Node's own agent
 // socket caps so outbound HTTP (and any global-agent streams) aren't queued.
@@ -231,6 +231,7 @@ export function start(): void {
     kc.loadFromDefault()
   }
   const core = kc.makeApiClient(k8s.CoreV1Api)
+  const apps = kc.makeApiClient(k8s.AppsV1Api)
 
   const build = buildSentinel(cfg)
   const sink = new HttpAlertSink(novaUrl)
@@ -263,6 +264,9 @@ export function start(): void {
   const onEvent = (obj: k8s.CoreV1Event) => {
     void engine.onEvent(obj as EventLike).catch((e) => log(`onEvent error: ${e}`))
   }
+  const onDeployment = (obj: k8s.V1Deployment) => {
+    void engine.onDeployment(obj as DeploymentLike).catch((e) => log(`onDeployment error: ${e}`))
+  }
 
   for (const ns of scopes) {
     const podPath = ns ? `/api/v1/namespaces/${ns}/pods` : "/api/v1/pods"
@@ -278,6 +282,15 @@ export function start(): void {
       eventPath,
       () => (ns ? core.listNamespacedEvent(ns) : core.listEventForAllNamespaces()),
       { add: onEvent, update: onEvent, delete: () => {} }
+    )
+    const deployPath = ns
+      ? `/apis/apps/v1/namespaces/${ns}/deployments`
+      : "/apis/apps/v1/deployments"
+    runInformer<k8s.V1Deployment>(
+      kc,
+      deployPath,
+      () => (ns ? apps.listNamespacedDeployment(ns) : apps.listDeploymentForAllNamespaces()),
+      { add: onDeployment, update: onDeployment, delete: () => {} }
     )
   }
 

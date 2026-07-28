@@ -190,3 +190,45 @@ export function extractEventSignal(
     source: { kind: io?.kind ?? "Event", name: objectName },
   }
 }
+
+// ── Deployment → Signal (rollout health) ──────────────────────────────────────
+// A stuck rollout is a leading sign of a bad deploy. Kubernetes sets the
+// `Progressing` condition to False with reason `ProgressDeadlineExceeded` when a
+// rollout fails to make progress within `progressDeadlineSeconds` — a definitive,
+// low-false-positive signal (transient unavailability during a normal rollout is
+// ignored). Pure.
+
+export interface DeploymentConditionLike {
+  type?: string
+  status?: string
+  reason?: string
+  message?: string
+}
+
+export interface DeploymentLike {
+  metadata?: { name?: string; namespace?: string; labels?: Record<string, string> }
+  status?: { conditions?: DeploymentConditionLike[] }
+}
+
+export function extractDeploymentSignals(dep: DeploymentLike): Signal[] {
+  const namespace = dep.metadata?.namespace ?? "default"
+  const name = dep.metadata?.name ?? "unknown"
+  const service = serviceNameFromLabels(dep.metadata?.labels, name)
+  const progressing = dep.status?.conditions?.find((c) => c.type === "Progressing")
+  if (progressing?.status === "False" && progressing.reason === "ProgressDeadlineExceeded") {
+    const detail = progressing.message ? `: ${progressing.message}` : ""
+    return [
+      {
+        kind: "BadRollout",
+        service,
+        namespace,
+        severity: "critical",
+        hard: true,
+        message: `Deployment ${name} rollout exceeded its progress deadline${detail}`,
+        source: { kind: "Deployment", name },
+      },
+    ]
+  }
+  return []
+}
+

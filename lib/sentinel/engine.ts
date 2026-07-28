@@ -1,5 +1,5 @@
 import { Correlator } from "./correlate"
-import { extractPodSignals, podMemoryLimits, type EventLike, type PodLike } from "./extract"
+import { extractPodSignals, podMemoryLimits, extractDeploymentSignals, type EventLike, type PodLike, type DeploymentLike } from "./extract"
 import { extractEventSignal } from "./extract"
 import { decisionToAlert } from "./incident"
 import { serviceNameFromLabels } from "./signal"
@@ -149,6 +149,11 @@ export class SentinelEngine {
   async onEvent(event: EventLike): Promise<void> {
     const signal = extractEventSignal(event, this.index.resolve)
     if (signal) await this.process([signal])
+  }
+
+  /** Rollout health: a Deployment stuck past its progress deadline (bad deploy). */
+  async onDeployment(dep: DeploymentLike): Promise<void> {
+    await this.process(extractDeploymentSignals(dep))
   }
 
   /** Feed one log line through the log-anomaly analyzer (signatures + novelty +

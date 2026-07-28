@@ -66,6 +66,8 @@ const SIGNAL_TO_FAILURE: Record<string, FailureType> = {
   // Leading indicators (lib/sentinel/leading).
   RestartsAccelerating: "CrashLoopBackOff",
   MemoryPressureRising: "memory-leak",
+  // Rollout health (lib/sentinel/extract).
+  BadRollout: "bad-deploy",
 }
 
 export function decisionToAlert(decision: IncidentDecision, at: number = Date.now()): SentinelAlert {
