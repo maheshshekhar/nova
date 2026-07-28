@@ -13,7 +13,7 @@
 # the payment-monitoring namespace, applies this file, then points Nova at it.
 #
 # The dashboard RBAC below references the Nova dashboard's ServiceAccount
-# (dashboard-sa in nova-monitoring), so the Nova dashboard must already be up.
+# (named `dashboard` in nova-monitoring), so the Nova dashboard must already be up.
 #
 # Images (built locally, loaded into KinD — never pulled):
 #   nova/payment-service:latest  nova/config-service:latest
@@ -399,8 +399,8 @@ data:
               description: "config-service is logging missing-config / fatal errors (Loki ruler)."
 
 # ── Dashboard RBAC into production — inject / remediate the payment workloads ──
-# The dashboard's ServiceAccount (dashboard-sa) is created by the monitoring
-# platform in nova-monitoring; these production-scoped grants let its /api/inject
+# The dashboard's ServiceAccount (named `dashboard`, created by the Nova Helm
+# release in nova-monitoring); these production-scoped grants let its /api/inject
 # and /api/remediate routes drive the payment demo.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -429,7 +429,7 @@ metadata:
   namespace: production
 subjects:
   - kind: ServiceAccount
-    name: dashboard-sa
+    name: dashboard
     namespace: nova-monitoring
 roleRef:
   kind: Role

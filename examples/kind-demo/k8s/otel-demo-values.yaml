@@ -67,8 +67,9 @@ components:
 #     http://prometheus.otel-demo:9090
 #
 # To make Nova read REAL RED metrics (error rate / latency / RPS) from it, set
-# Nova's metrics block — edit examples/kind-demo/k8s/nova-config.yaml, or live:
-#   kubectl -n nova-monitoring edit configmap nova-config
+# Nova's metrics block — edit the novaConfig in examples/kind-demo/k8s/nova-values.yaml
+# and re-run scripts/platform, or live:
+#   kubectl -n nova-monitoring edit configmap dashboard-config
 #
 #     metrics:
 #       provider: prometheus

@@ -452,7 +452,7 @@ troubleshooting.
 - API keys are read **only** server‑side (`/api/analyze`, deployment env, `ai-keys` secret)
   and never sent to the browser.
 - `examples/kind-demo/k8s/secret.yaml` and `.env.local` are git‑ignored — do not commit real keys.
-- The in‑cluster dashboard gets a narrowly‑scoped ServiceAccount (`dashboard-sa`) that can
+- The in‑cluster dashboard gets a narrowly‑scoped ServiceAccount (`dashboard`) that can
   only manage Jobs and read pods in the `production` namespace.
 
 ---
