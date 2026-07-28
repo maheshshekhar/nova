@@ -239,10 +239,18 @@ domain:
 - [x] Example yaml (`nova.config.example.yaml`) + defaults/loader tests
       (`lib/sentinel/config.test.ts`).
 
-### B7. Dashboard surfacing  ⬜
-- [ ] Sentinel-detected incidents appear in the incident list with **evidence** and a
-      "why flagged / confidence" summary; a signal **timeline** on incident detail.
-- [ ] Clear provenance badge: `detected by Nova` vs `from Alertmanager`.
+### B7. Dashboard surfacing  🚧
+- [x] Provenance persisted end-to-end: `IncidentRecord.detectedBy` +
+      `CreateIncidentInput.detectedBy`; the `/api/alerts` route captures the alert
+      `source` label (`nova-sentinel`) and the store persists it.
+- [x] Clear provenance badge (`components/dashboard/nova-badge.tsx`) rendered on the
+      overview widget, the incidents list (active + resolved) and the incident
+      detail header — distinguishing `detected by Nova` from external/inject paths.
+- [x] Sentinel evidence (the signal list + confidence "why flagged" summary) already
+      rides in the incident description that the detail page renders.
+- [x] Tests: store persists/round-trips `detectedBy`; absent for external paths.
+- [ ] Optional: a dedicated signal **timeline** panel on incident detail (structured
+      evidence beyond the description).
 
 ### B8. Production safety  ⬜
 - [ ] Precision guards, rate limits, backpressure; read-only RBAC; resource limits.

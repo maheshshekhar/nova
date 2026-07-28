@@ -39,6 +39,8 @@ export interface CreateIncidentInput {
   timeline?: TimelineEntry[]
   relatedLogs?: RelatedLog[]
   rca?: IncidentRca | null
+  /** Detection provenance (alert `source` label), e.g. "nova-sentinel". */
+  detectedBy?: string
 }
 
 export interface UpdateIncidentInput {

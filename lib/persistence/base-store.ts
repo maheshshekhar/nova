@@ -189,6 +189,7 @@ export abstract class BaseIncidentStore implements PersistenceStore {
         relatedLogs: input.relatedLogs ?? [],
         rca: input.rca ?? null,
         origin: "live",
+        detectedBy: input.detectedBy,
       }
       store.incidents.unshift(record)
       await this.writeState(store)

@@ -3,6 +3,7 @@
 import { useState, useEffect, type ReactNode } from "react"
 import { AlertTriangle, ArrowUpRight, CheckCircle2, Clock, Users, Zap } from "lucide-react"
 import Link from "next/link"
+import { NovaBadge } from "./nova-badge"
 
 // Fades its children in on first mount (used when an incident first appears).
 function FadeIn({ children }: { children: ReactNode }) {
@@ -74,6 +75,7 @@ type RawIncident = {
   status: string
   startedAt: number
   affectedUsers?: number
+  detectedBy?: string
 }
 
 // Overview "Active Incidents" widget — driven entirely by the real incident store
@@ -163,6 +165,7 @@ export function IncidentAlerts() {
                           {inc.severity.toUpperCase()}
                         </span>
                         <span className="text-[10px] font-mono text-muted-foreground">{inc.id}</span>
+                        {inc.detectedBy === "nova-sentinel" && <NovaBadge />}
                       </div>
                       <p className="text-sm font-medium text-foreground mt-0.5 truncate">{inc.title}</p>
                       <div className="flex items-center gap-3 mt-1">
