@@ -255,6 +255,66 @@ export const DetectionConfigSchema = z
   .default({})
 export type DetectionConfig = z.infer<typeof DetectionConfigSchema>
 
+// ── Sentinel (early-detection engine) ────────────────────────────────────────
+// The tunable surface for Nova Sentinel (lib/sentinel). Every field defaults to
+// today's code behaviour and the whole block defaults to `enabled: false` so a
+// config without a `sentinel:` section is behaviour-neutral (the companion is
+// opt-in). The Sentinel worker reads THIS block (standalone, no server-only).
+export const SentinelSignatureSchema = z.object({
+  kind: z.string(),
+  category: z.enum(["database", "network", "runtime", "http", "resource"]).default("runtime"),
+  severity: z.enum(["critical", "warning", "info"]).default("warning"),
+  hard: z.boolean().default(false),
+  pattern: z.string(),
+})
+export type SentinelSignature = z.infer<typeof SentinelSignatureSchema>
+
+export const SentinelConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    dryRun: z.boolean().default(false),
+    /** Namespaces to watch (empty = all). */
+    namespaces: z.array(z.string()).default([]),
+    /** De-dup window: one incident per service until it recovers or this expires. */
+    dedupeWindowSec: z.number().int().positive().default(600),
+    /** Distinct SOFT signal kinds required to confirm a soft-only incident. */
+    softConfirmKinds: z.number().int().positive().default(2),
+    /** Rate/volume-shift aggressiveness. */
+    sensitivity: z.enum(["low", "medium", "high"]).default("medium"),
+    logs: z
+      .object({
+        enabled: z.boolean().default(true),
+        /** Lines a service must emit before novelty is reported. */
+        warmupLines: z.number().int().nonnegative().default(50),
+        /** Deployment-supplied technical signatures (in addition to the built-ins). */
+        extraSignatures: z.array(SentinelSignatureSchema).default([]),
+      })
+      .default({}),
+    /** Declared business-impact signal (a burst = an incident). */
+    impact: z
+      .object({
+        enabled: z.boolean().default(false),
+        pattern: z.string().optional(),
+        level: z.string().optional(),
+        minImpact: z.number().int().positive().default(5),
+        label: z.string().default("impacted requests"),
+      })
+      .default({}),
+    /** Absence/baseline detection on a countable success signal. */
+    absence: z
+      .object({
+        enabled: z.boolean().default(false),
+        successPattern: z.string().optional(),
+        level: z.string().optional(),
+        minBaseline: z.number().int().positive().default(10),
+        dropFactor: z.number().positive().default(5),
+        label: z.string().default("successful requests"),
+      })
+      .default({}),
+  })
+  .default({})
+export type SentinelConfig = z.infer<typeof SentinelConfigSchema>
+
 // ── Context assembly (consumed at M4) ────────────────────────────────────────
 export const ContextProviderConfigSchema = z
   .object({ id: z.string(), enabled: z.boolean().default(true) })
@@ -424,6 +484,7 @@ export const NovaConfigSchema = z
     metrics: MetricsConfigSchema,
     dashboard: DashboardConfigSchema,
     detection: DetectionConfigSchema,
+    sentinel: SentinelConfigSchema,
     context: ContextConfigSchema,
     prompts: PromptsConfigSchema,
     eval: EvalConfigSchema,

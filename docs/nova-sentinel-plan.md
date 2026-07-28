@@ -222,12 +222,22 @@ domain:
       warm-up/collapse/low-traffic/once-per-bucket, analyzer + engine `tick`
       integration. 508 tests green. `BusinessImpact`/`SuccessDrop` → `latency-slo`.
 
-### B6. Config surface — make `detection:` REAL  ⬜
-- [ ] Replace the currently-inert `detection:` block with a real, consumed config:
-      `enabled`, `dryRun`, `sensitivity`, per-signal toggles, `dedupeWindow`, domain
-      signal refs, absence baselines.
-- [ ] zod defaults (default `enabled: false` → opt-in, behaviour-neutral) + example
-      yaml + defaults test + secret-free settings projection.
+### B6. Config surface — make `sentinel:` REAL  ✅
+- [x] Typed `sentinel:` block (`SentinelConfigSchema` in `lib/config/schema.ts`):
+      `enabled`, `dryRun`, `namespaces`, `dedupeWindowSec`, `softConfirmKinds`,
+      `sensitivity`, `logs.{enabled,warmupLines,extraSignatures}`,
+      `impact.{enabled,pattern,level,minImpact,label}`,
+      `absence.{enabled,successPattern,level,minBaseline,dropFactor,label}`.
+- [x] zod defaults with `enabled: false` (opt-in, behaviour-neutral); every field
+      defaults to today's code behaviour.
+- [x] `buildSentinel(cfg)` (`lib/sentinel/config.ts`) — pure mapper config →
+      Correlator + LogAnalyzer (impact/absence monitors, compiled extra signatures,
+      sensitivity → rate spike factor). `loadSentinelConfig()` reads the block
+      standalone (no server-only) so the companion consumes the same file.
+- [x] Runtime consumes the config (`run.ts`), with a few env overrides retained;
+      Helm mounts the shared `nova.config.yaml` into the Sentinel pod.
+- [x] Example yaml (`nova.config.example.yaml`) + defaults/loader tests
+      (`lib/sentinel/config.test.ts`).
 
 ### B7. Dashboard surfacing  ⬜
 - [ ] Sentinel-detected incidents appear in the incident list with **evidence** and a

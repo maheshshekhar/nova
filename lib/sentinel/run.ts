@@ -1,10 +1,11 @@
 import * as k8s from "@kubernetes/client-node"
 import { Writable } from "node:stream"
 import { SentinelEngine } from "./engine"
-import { Correlator } from "./correlate"
 import { HttpAlertSink } from "./sink"
 import { serviceNameFromLabels } from "./signal"
 import { parseLogLine } from "./logs/parse"
+import { buildSentinel, loadSentinelConfig } from "./config"
+import type { SentinelConfig } from "@/lib/config/schema"
 import type { EventLike, PodLike } from "./extract"
 
 // The Sentinel runtime — the only I/O-bound piece.
@@ -16,36 +17,36 @@ import type { EventLike, PodLike } from "./extract"
 // incident mapping all live in tested, cluster-free modules; this file is
 // deliberately thin.
 //
-// Configuration is entirely environment-driven so the companion needs no access
-// to Nova's server-only config loader:
+// Tuning comes from the `sentinel:` block of nova.config.yaml (loaded standalone,
+// no server-only). A few operational knobs may be overridden by env for the
+// env-driven deployment path:
 //   NOVA_URL            base URL of the Nova dashboard (default http://nova:3000)
 //   SENTINEL_NAMESPACES comma-separated namespaces to watch (empty = all)
 //   SENTINEL_DRY_RUN    "true" → log decisions, never open incidents
-//   SENTINEL_WINDOW_MS  correlation window in ms (default 600000)
-//   SENTINEL_SOFT_CONFIRM distinct soft signal kinds to confirm (default 2)
-//   SENTINEL_LOGS       "false" → disable pod-log tailing (default on)
+//   SENTINEL_WINDOW_MS  correlation/dedup window in ms
+//   SENTINEL_SOFT_CONFIRM distinct soft signal kinds to confirm
+//   SENTINEL_LOGS       "false" → disable pod-log tailing
+//   NOVA_CONFIG         path to nova.config.yaml (default /app/nova.config.yaml)
 
-interface RuntimeConfig {
-  novaUrl: string
-  namespaces: string[]
-  dryRun: boolean
-  windowMs: number
-  softConfirmKinds: number
-  logs: boolean
-}
-
-function readConfig(): RuntimeConfig {
-  return {
-    novaUrl: process.env.NOVA_URL || "http://nova:3000",
-    namespaces: (process.env.SENTINEL_NAMESPACES || "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-    dryRun: process.env.SENTINEL_DRY_RUN === "true",
-    windowMs: Number(process.env.SENTINEL_WINDOW_MS) || 10 * 60 * 1000,
-    softConfirmKinds: Number(process.env.SENTINEL_SOFT_CONFIRM) || 2,
-    logs: process.env.SENTINEL_LOGS !== "false",
+/** Load the `sentinel:` config, then let a handful of env vars override the
+ * operational knobs (backward-compatible with the env-only deployment). */
+function readRuntime(): { novaUrl: string; cfg: SentinelConfig } {
+  const file = loadSentinelConfig()
+  const env = process.env
+  const cfg: SentinelConfig = {
+    ...file,
+    dryRun: env.SENTINEL_DRY_RUN !== undefined ? env.SENTINEL_DRY_RUN === "true" : file.dryRun,
+    namespaces: env.SENTINEL_NAMESPACES
+      ? env.SENTINEL_NAMESPACES.split(",").map((s) => s.trim()).filter(Boolean)
+      : file.namespaces,
+    softConfirmKinds: env.SENTINEL_SOFT_CONFIRM ? Number(env.SENTINEL_SOFT_CONFIRM) : file.softConfirmKinds,
+    dedupeWindowSec: env.SENTINEL_WINDOW_MS ? Math.round(Number(env.SENTINEL_WINDOW_MS) / 1000) : file.dedupeWindowSec,
+    logs: {
+      ...file.logs,
+      enabled: env.SENTINEL_LOGS !== undefined ? env.SENTINEL_LOGS !== "false" : file.logs.enabled,
+    },
   }
+  return { novaUrl: env.NOVA_URL || "http://nova:3000", cfg }
 }
 
 const RESTART_DELAY_MS = 5000
@@ -160,7 +161,7 @@ function makeLogTailer(kc: k8s.KubeConfig, engine: SentinelEngine) {
 }
 
 export function start(): void {
-  const cfg = readConfig()
+  const { novaUrl, cfg } = readRuntime()
   const kc = new k8s.KubeConfig()
   try {
     kc.loadFromCluster()
@@ -169,18 +170,20 @@ export function start(): void {
   }
   const core = kc.makeApiClient(k8s.CoreV1Api)
 
-  const sink = new HttpAlertSink(cfg.novaUrl)
+  const build = buildSentinel(cfg)
+  const sink = new HttpAlertSink(novaUrl)
   const engine = new SentinelEngine({
     sink,
-    correlator: new Correlator({ windowMs: cfg.windowMs, softConfirmKinds: cfg.softConfirmKinds }),
+    correlator: build.correlator,
+    analyzer: build.analyzer,
     dryRun: cfg.dryRun,
     logger: log,
   })
-  const tailer = cfg.logs ? makeLogTailer(kc, engine) : null
+  const tailer = build.logsEnabled ? makeLogTailer(kc, engine) : null
 
   const scopes = cfg.namespaces.length > 0 ? cfg.namespaces : [null]
   log(
-    `starting — nova=${cfg.novaUrl} scope=${cfg.namespaces.length ? cfg.namespaces.join(",") : "all namespaces"} dryRun=${cfg.dryRun} logs=${cfg.logs}`
+    `starting — nova=${novaUrl} scope=${cfg.namespaces.length ? cfg.namespaces.join(",") : "all namespaces"} dryRun=${cfg.dryRun} logs=${build.logsEnabled} impact=${cfg.impact.enabled} absence=${cfg.absence.enabled} sensitivity=${cfg.sensitivity}`
   )
 
   const onPod = (obj: k8s.V1Pod) => {

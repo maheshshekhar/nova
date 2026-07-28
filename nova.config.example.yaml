@@ -115,6 +115,37 @@ detection:
     - { when: { errorRatePct: ">0.5" }, severity: medium }
     - { when: {}, severity: low }
 
+# ── Nova Sentinel (zero-instrumentation early-detection engine) ───────────────
+# The read-only companion (deploy/helm sentinel) opens evidenced incidents from
+# Kubernetes signals + log anomalies BEFORE Prometheus alerts fire. Opt-in.
+sentinel:
+  enabled: false               # master switch (also gates the Helm companion)
+  dryRun: false                # true → log decisions, never open incidents
+  namespaces: []               # [] = all namespaces
+  dedupeWindowSec: 600         # one incident per service until it recovers/expires
+  softConfirmKinds: 2          # distinct SOFT signals needed to confirm
+  sensitivity: medium          # low | medium | high (rate/volume spike aggressiveness)
+  logs:
+    enabled: true              # tail pod logs for anomaly/signature/rate signals
+    warmupLines: 50            # learn a service's normal templates before flagging novelty
+    extraSignatures: []        # add your own: { kind, category, severity, hard, pattern }
+    # - { kind: PaymentDeclined, category: database, severity: warning, hard: false, pattern: "payment declined" }
+  # Declared business impact — a burst of this pattern is customer impact.
+  impact:
+    enabled: false
+    pattern: "pool\\.connect\\(\\) timeout"   # e.g. payments: a failed checkout
+    # level: ERROR
+    minImpact: 5               # matches/minute that raise a signal
+    label: failed checkouts
+  # Absence/baseline — flag when a countable SUCCESS signal collapses ("checkouts stopped").
+  absence:
+    enabled: false
+    successPattern: "checkout complete"
+    # level: INFO
+    minBaseline: 10            # ignore low-traffic services below this rate
+    dropFactor: 5              # current < baseline/dropFactor ⇒ a drop
+    label: checkouts
+
 # ── Context assembly ─────────────────────────────────────────────────────────
 context:
   maxTokens: 12000
