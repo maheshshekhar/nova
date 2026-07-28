@@ -4,6 +4,7 @@ import {
   type Signal,
   type SignalSeverity,
 } from "./signal"
+import { parseQuantity } from "./quantity"
 
 // Pure Kubernetes → Signal extraction. Given a Pod's structural shape (the subset
 // of fields we read), emit the normalized detection signals it warrants. No
@@ -34,8 +35,14 @@ export interface PodConditionLike {
   message?: string
 }
 
+export interface ContainerSpecLike {
+  name?: string
+  resources?: { limits?: Record<string, string>; requests?: Record<string, string> }
+}
+
 export interface PodLike {
   metadata?: { name?: string; namespace?: string; labels?: Record<string, string> }
+  spec?: { containers?: ContainerSpecLike[] }
   status?: {
     phase?: string
     conditions?: PodConditionLike[]
@@ -119,13 +126,24 @@ function dedupeByKind(signals: Signal[]): Signal[] {
   return out
 }
 
+/** Per-container memory limit (bytes) from the pod spec, for the memory-trend
+ * monitor. Containers without a memory limit are omitted. */
+export function podMemoryLimits(pod: PodLike): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const c of pod.spec?.containers ?? []) {
+    if (!c.name) continue
+    const limit = parseQuantity(c.resources?.limits?.memory)
+    if (limit != null && limit > 0) out.set(c.name, limit)
+  }
+  return out
+}
+
 // ── Event → Signal ────────────────────────────────────────────────────────────
 // Kubernetes Events catch things pod status alone doesn't surface well: failed
 // volume/secret mounts, probe failures, scheduling failures, sandbox/network
 // errors. An Event references an object (usually a Pod) but not its labels, so
 // the caller passes a `ServiceResolver` (backed by the informer's pod cache) to
 // map object → service; without one we fall back to the object name.
-
 export interface EventLike {
   reason?: string
   message?: string

@@ -188,3 +188,39 @@ describe("SentinelEngine production-safety guards", () => {
   })
 })
 
+describe("SentinelEngine leading indicators", () => {
+  function podWithMemLimit(name = "svc-x", app = "svc", ns = "prod", limit = "100Mi"): any {
+    return {
+      metadata: { name, namespace: ns, labels: { app } },
+      spec: { containers: [{ name: "app", resources: { limits: { memory: limit } } }] },
+      status: { phase: "Running", containerStatuses: [{ name: "app", ready: true, state: { running: {} } }] },
+    }
+  }
+
+  it("opens a MemoryPressureRising incident when usage climbs toward the limit", async () => {
+    const MB = 1024 * 1024
+    const sink = collectingSink()
+    let t = 0
+    // MemoryPressureRising is a SOFT (corroborating) signal; use a 1-kind confirm
+    // correlator so this test exercises the onPod→limit→onMemory→incident wiring.
+    const engine = new SentinelEngine({ sink, correlator: new Correlator({ softConfirmKinds: 1 }), now: () => t })
+    await engine.onPod(podWithMemLimit()) // records the 100Mi limit
+    // climbing high + rising: 86% -> 92% -> 96%
+    await engine.onMemory("prod", "svc", "svc-x", "app", 86 * MB)
+    t = 60_000
+    await engine.onMemory("prod", "svc", "svc-x", "app", 92 * MB)
+    t = 120_000
+    await engine.onMemory("prod", "svc", "svc-x", "app", 96 * MB)
+    expect(sink.posted).toHaveLength(1)
+    expect(sink.posted[0].labels).toMatchObject({ service: "svc", failure_type: "memory-leak" })
+  })
+
+  it("ignores memory for containers without a known limit", async () => {
+    const sink = collectingSink()
+    const engine = new SentinelEngine({ sink })
+    // no onPod → no limit recorded
+    await engine.onMemory("prod", "svc", "svc-x", "app", 999 * 1024 * 1024)
+    expect(sink.posted).toHaveLength(0)
+  })
+})
+

@@ -1,5 +1,5 @@
 import { Correlator } from "./correlate"
-import { extractPodSignals, type EventLike, type PodLike } from "./extract"
+import { extractPodSignals, podMemoryLimits, type EventLike, type PodLike } from "./extract"
 import { extractEventSignal } from "./extract"
 import { decisionToAlert } from "./incident"
 import { serviceNameFromLabels } from "./signal"
@@ -7,6 +7,7 @@ import type { Signal } from "./signal"
 import type { IncidentSink } from "./sink"
 import { PodServiceIndex } from "./service-index"
 import { LogAnalyzer, type LogLine } from "./logs/analyzer"
+import { RestartAccelerationMonitor, MemoryTrendMonitor } from "./leading"
 
 // The Sentinel engine — the pure decision core the informer worker drives.
 //
@@ -54,6 +55,9 @@ export class SentinelEngine {
   private readonly startupGraceMs: number
   private readonly startedAt: number
   private readonly emitted: number[] = [] // recent emission timestamps (storm control)
+  private readonly restartAccel: RestartAccelerationMonitor
+  private readonly memTrend: MemoryTrendMonitor
+  private readonly memLimits = new Map<string, number>() // ns/pod/container → limit bytes
   private readonly log: (message: string) => void
   private readonly now: () => number
 
@@ -67,15 +71,34 @@ export class SentinelEngine {
     this.maxIncidents = opts.maxIncidentsPerWindow ?? 0
     this.rateWindowMs = opts.rateWindowMs ?? 60_000
     this.startupGraceMs = opts.startupGraceMs ?? 0
+    this.restartAccel = new RestartAccelerationMonitor({ now: opts.now })
+    this.memTrend = new MemoryTrendMonitor({ now: opts.now })
     this.log = opts.logger ?? ((m) => console.log(m))
     this.now = opts.now ?? Date.now
     this.startedAt = this.now()
   }
 
+  /** Leading indicator: restart cadence accelerating (per container). */
+  private restartSignals(pod: PodLike): Signal[] {
+    const namespace = pod.metadata?.namespace ?? "default"
+    const podName = pod.metadata?.name ?? "unknown"
+    const service = serviceNameFromLabels(pod.metadata?.labels, podName)
+    const out: Signal[] = []
+    for (const c of pod.status?.containerStatuses ?? []) {
+      const container = c.name ?? "container"
+      const key = `${namespace}/${podName}/${container}`
+      const sig = this.restartAccel.observe(key, service, namespace, container, c.restartCount ?? 0)
+      if (sig) out.push(sig)
+    }
+    return out
+  }
+
   async onPod(pod: PodLike): Promise<void> {
     this.index.upsert(pod)
+    this.recordMemLimits(pod)
     const signals = extractPodSignals(pod)
-    if (signals.length === 0 && isPodReady(pod)) {
+    const leading = this.restartSignals(pod)
+    if (signals.length === 0 && leading.length === 0 && isPodReady(pod)) {
       // Recovery observed → re-arm detection for this service. Safe: the
       // /api/alerts pipeline owns incident lifecycle and de-dupes live incidents,
       // so re-arming never creates a duplicate.
@@ -84,11 +107,43 @@ export class SentinelEngine {
       this.correlator.resolve(namespace, service)
       return
     }
-    await this.process(signals)
+    await this.process([...signals, ...leading])
+  }
+
+  private recordMemLimits(pod: PodLike): void {
+    const namespace = pod.metadata?.namespace ?? "default"
+    const podName = pod.metadata?.name
+    if (!podName) return
+    for (const [container, limit] of podMemoryLimits(pod)) {
+      this.memLimits.set(`${namespace}/${podName}/${container}`, limit)
+    }
   }
 
   onPodDeleted(pod: PodLike): void {
     this.index.remove(pod)
+    const namespace = pod.metadata?.namespace ?? "default"
+    const podName = pod.metadata?.name
+    if (podName) {
+      const prefix = `${namespace}/${podName}/`
+      for (const k of this.memLimits.keys()) if (k.startsWith(prefix)) this.memLimits.delete(k)
+    }
+  }
+
+  /** Leading indicator: feed a container's memory usage (from metrics-server) so
+   * the trend monitor can flag a climb toward the limit before an OOMKill. */
+  async onMemory(
+    namespace: string,
+    service: string,
+    pod: string,
+    container: string,
+    usedBytes: number,
+    at?: number
+  ): Promise<void> {
+    const key = `${namespace}/${pod}/${container}`
+    const limit = this.memLimits.get(key)
+    if (limit == null) return
+    const sig = this.memTrend.observe(key, service, namespace, pod, container, usedBytes, limit, at ?? this.now())
+    if (sig) await this.process([sig])
   }
 
   async onEvent(event: EventLike): Promise<void> {
