@@ -252,9 +252,20 @@ domain:
 - [ ] Optional: a dedicated signal **timeline** panel on incident detail (structured
       evidence beyond the description).
 
-### B8. Production safety  ⬜
-- [ ] Precision guards, rate limits, backpressure; read-only RBAC; resource limits.
-- [ ] Dry-run/tuning mode surfaced in the UI; per-service mute.
+### B8. Production safety  🚧
+- [x] **Storm control / backpressure** (`SentinelEngine`): a global cap on NEW
+      incidents per window (`maxIncidentsPerMin`, sliding-window token accounting)
+      sheds a cluster-wide meltdown instead of opening thousands of incidents.
+- [x] **Per-service mute** (`mute: []`): drop signals for noisy services (load
+      generators, batch jobs) before correlation.
+- [x] **Startup grace** (`startupGraceSec`): suppress emission for N seconds after
+      start (still learns baselines + de-dups) so the initial informer sync of
+      pre-existing state can't storm.
+- [x] Read-only RBAC + resource limits (Helm) already in place; dry-run mode.
+- [x] Config surface (`mute`/`maxIncidentsPerMin`/`startupGraceSec`) + example yaml;
+      tests: mute, storm cap + window refill, startup grace. 521 tests green.
+- [ ] Dry-run/tuning mode surfaced in the dashboard UI (needs a Sentinel status
+      heartbeat) — follow-up.
 
 ---
 

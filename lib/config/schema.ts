@@ -281,6 +281,14 @@ export const SentinelConfigSchema = z
     softConfirmKinds: z.number().int().positive().default(2),
     /** Rate/volume-shift aggressiveness. */
     sensitivity: z.enum(["low", "medium", "high"]).default("medium"),
+    /** Services to never open incidents for (noisy jobs, load generators, …). */
+    mute: z.array(z.string()).default([]),
+    /** Storm control: max NEW incidents opened per minute across the cluster
+     * (0 = unlimited). Backpressure against a cluster-wide meltdown. */
+    maxIncidentsPerMin: z.number().int().nonnegative().default(20),
+    /** Suppress incident emission for this many seconds after start (still learns
+     * baselines) so the initial informer sync of pre-existing state can't storm. */
+    startupGraceSec: z.number().int().nonnegative().default(0),
     logs: z
       .object({
         enabled: z.boolean().default(true),

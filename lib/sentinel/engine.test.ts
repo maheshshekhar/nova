@@ -150,3 +150,41 @@ describe("SentinelEngine.tick (absence detection)", () => {
   })
 })
 
+describe("SentinelEngine production-safety guards", () => {
+  it("mutes configured services (no incident opened)", async () => {
+    const sink = collectingSink()
+    const engine = new SentinelEngine({ sink, mute: ["load-generator"] })
+    await engine.onPod(crashingPod("lg-x", "load-generator"))
+    expect(sink.posted).toHaveLength(0)
+    // A non-muted service still flags.
+    await engine.onPod(crashingPod("checkout-x", "checkout"))
+    expect(sink.posted).toHaveLength(1)
+  })
+
+  it("storm control caps new incidents per window", async () => {
+    const sink = collectingSink()
+    let t = 0
+    const engine = new SentinelEngine({ sink, maxIncidentsPerWindow: 2, rateWindowMs: 60_000, now: () => t })
+    for (const svc of ["a", "b", "c", "d"]) {
+      await engine.onPod(crashingPod(`${svc}-x`, svc))
+    }
+    expect(sink.posted).toHaveLength(2) // c and d suppressed
+    // After the window rolls over, the cap refills.
+    t = 61_000
+    await engine.onPod(crashingPod("e-x", "e"))
+    expect(sink.posted).toHaveLength(3)
+  })
+
+  it("startup grace suppresses incidents during the initial window", async () => {
+    const sink = collectingSink()
+    let t = 1000
+    const engine = new SentinelEngine({ sink, startupGraceMs: 30_000, now: () => t })
+    await engine.onPod(crashingPod("checkout-x", "checkout"))
+    expect(sink.posted).toHaveLength(0) // within grace
+    // Past the grace window, a fresh signal opens an incident.
+    t = 40_000
+    await engine.onPod(crashingPod("orders-x", "orders"))
+    expect(sink.posted).toHaveLength(1)
+  })
+})
+
