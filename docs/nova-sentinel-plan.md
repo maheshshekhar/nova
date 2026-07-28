@@ -264,8 +264,25 @@ domain:
 - [x] Read-only RBAC + resource limits (Helm) already in place; dry-run mode.
 - [x] Config surface (`mute`/`maxIncidentsPerMin`/`startupGraceSec`) + example yaml;
       tests: mute, storm cap + window refill, startup grace. 521 tests green.
+- [x] **Log-tail resilience**: streams auto-restart on error (no thrash) and Node
+      agent socket caps lifted.
 - [ ] Dry-run/tuning mode surfaced in the dashboard UI (needs a Sentinel status
       heartbeat) — follow-up.
+
+### E2E validation (kind `nova-platform`, otel-demo)  ✅ / findings
+- [x] Config-driven deploy (mounted `nova.config.yaml`): `impact=true`, `mute`, cap
+      all read from the `sentinel:` block.
+- [x] k8s hard signal → incident (ImagePullBackOff).
+- [x] Log-signature → incident (`panic:` → `Log:Panic`).
+- [x] **Mute works**: a crashing `load-generator` pod opened **no** incident.
+- [x] Storm/grace guards active; a fresh pod's log line is detected (tail restart OK).
+- [ ] **Known limitation found**: per-pod log follow-streams are bounded by the
+      client/apiserver concurrent-stream limit, so in a busy namespace (30+ pods)
+      some pods aren't tailed → log-anomaly/business-impact/absence can be missed
+      for those pods. Engines are unit-tested & correct; this is a tailing-transport
+      scale gap. **Follow-up**: bounded/rotating tails or a log-backend tail path.
+- [ ] **Provenance badge** needs the dashboard image rebuilt with B7 (the running
+      dashboard predates B7, so `detectedBy` came back empty end-to-end).
 
 ---
 

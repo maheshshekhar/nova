@@ -1,5 +1,7 @@
 import * as k8s from "@kubernetes/client-node"
 import { Writable } from "node:stream"
+import * as http from "node:http"
+import * as https from "node:https"
 import { SentinelEngine } from "./engine"
 import { HttpAlertSink } from "./sink"
 import { serviceNameFromLabels } from "./signal"
@@ -7,6 +9,16 @@ import { parseLogLine } from "./logs/parse"
 import { buildSentinel, loadSentinelConfig } from "./config"
 import type { SentinelConfig } from "@/lib/config/schema"
 import type { EventLike, PodLike } from "./extract"
+
+// Each tailed pod holds ONE long-lived follow-stream open. Lift Node's own agent
+// socket caps so outbound HTTP (and any global-agent streams) aren't queued.
+// NOTE: log tailing opens one stream per pod/container and is bounded by the
+// client + apiserver concurrent-stream limits, so a very busy namespace may not
+// tail every pod. Scope `sentinel.namespaces` (or integrate a log backend) rather
+// than tailing thousands of pods directly. k8s-object + event detection is
+// unaffected and always covers the whole scope.
+http.globalAgent.maxSockets = Infinity
+https.globalAgent.maxSockets = Infinity
 
 // The Sentinel runtime — the only I/O-bound piece.
 //
@@ -96,6 +108,7 @@ function runInformer<T extends k8s.KubernetesObject>(
 function makeLogTailer(kc: k8s.KubeConfig, engine: SentinelEngine) {
   const logApi = new k8s.Log(kc)
   const streams = new Map<string, Abortable | null>()
+  const wanted = new Set<string>() // keys that should stay tailed (for restart)
 
   function lineSink(service: string, namespace: string, pod: string): Writable {
     let buf = ""
@@ -114,6 +127,33 @@ function makeLogTailer(kc: k8s.KubeConfig, engine: SentinelEngine) {
     })
   }
 
+  // Open one follow-stream for a container; restart it only on a hard error
+  // (not a normal end/close) so a genuinely dropped stream recovers without
+  // thrashing a healthy one.
+  function tail(key: string, namespace: string, name: string, container: string, service: string): void {
+    logApi
+      .log(namespace, name, container, lineSink(service, namespace, name), {
+        follow: true,
+        sinceSeconds: 2,
+        timestamps: false,
+      })
+      .then(
+        (req) => {
+          streams.set(key, req as unknown as Abortable)
+          const emitter = req as unknown as { on?: (e: string, cb: (arg?: unknown) => void) => void }
+          emitter.on?.("error", () => {
+            streams.delete(key)
+            if (wanted.has(key)) setTimeout(() => tail(key, namespace, name, container, service), 5000)
+          })
+        },
+        (err) => {
+          streams.delete(key)
+          log(`log tail failed for ${key}: ${err}`)
+          if (wanted.has(key)) setTimeout(() => tail(key, namespace, name, container, service), 5000)
+        }
+      )
+  }
+
   return {
     start(pod: k8s.V1Pod): void {
       if (pod.status?.phase !== "Running") return
@@ -123,23 +163,10 @@ function makeLogTailer(kc: k8s.KubeConfig, engine: SentinelEngine) {
       const service = serviceNameFromLabels(pod.metadata?.labels, name)
       for (const c of pod.spec?.containers ?? []) {
         const key = `${namespace}/${name}/${c.name}`
-        if (streams.has(key)) continue
+        if (wanted.has(key)) continue // already tailing / reserved
+        wanted.add(key)
         streams.set(key, null) // reserve to avoid a double-start race
-        logApi
-          .log(namespace, name, c.name ?? "", lineSink(service, namespace, name), {
-            follow: true,
-            sinceSeconds: 2,
-            timestamps: false,
-          })
-          .then(
-            (req) => {
-              streams.set(key, req as unknown as Abortable)
-            },
-            (err) => {
-              streams.delete(key)
-              log(`log tail failed for ${key}: ${err}`)
-            }
-          )
+        tail(key, namespace, name, c.name ?? "", service)
       }
     },
     stop(pod: k8s.V1Pod): void {
@@ -149,6 +176,7 @@ function makeLogTailer(kc: k8s.KubeConfig, engine: SentinelEngine) {
       const prefix = `${namespace}/${name}/`
       for (const [key, req] of streams) {
         if (!key.startsWith(prefix)) continue
+        wanted.delete(key)
         try {
           req?.abort()
         } catch {
@@ -156,6 +184,8 @@ function makeLogTailer(kc: k8s.KubeConfig, engine: SentinelEngine) {
         }
         streams.delete(key)
       }
+      // Also clear any reserved-but-not-yet-open keys for this pod.
+      for (const key of wanted) if (key.startsWith(prefix)) wanted.delete(key)
     },
   }
 }
