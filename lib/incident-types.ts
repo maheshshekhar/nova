@@ -50,6 +50,15 @@ export interface RelatedLog {
   message: string
 }
 
+// A single detection signal Nova Sentinel correlated into an incident — the
+// structured "why flagged" evidence, surfaced on the incident detail page.
+export interface SentinelEvidence {
+  kind: string
+  message: string
+  severity: string
+  hard: boolean
+}
+
 export interface IncidentRca {
   text: string
   provider: string
@@ -89,6 +98,10 @@ export interface IncidentRecord {
   // Detection provenance — the alert `source` label, e.g. "nova-sentinel" when
   // Nova Sentinel opened the incident itself. Undefined for external/inject paths.
   detectedBy?: string
+  // Structured Sentinel evidence (the correlated signals) + confidence (0..1),
+  // present when Nova Sentinel opened the incident.
+  evidence?: SentinelEvidence[]
+  confidence?: number
 }
 
 // Human-friendly labels for each failure type (used in UI badges / chat context).

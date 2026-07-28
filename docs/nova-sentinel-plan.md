@@ -259,8 +259,10 @@ domain:
 - [x] Sentinel evidence (the signal list + confidence "why flagged" summary) already
       rides in the incident description that the detail page renders.
 - [x] Tests: store persists/round-trips `detectedBy`; absent for external paths.
-- [ ] Optional: a dedicated signal **timeline** panel on incident detail (structured
-      evidence beyond the description).
+- [x] Dedicated **Detection Evidence** panel on incident detail: the Sentinel
+      threads its correlated signals as a structured `nova_signals` annotation →
+      `/api/alerts` parses it into `IncidentRecord.evidence` (+ `confidence`), and
+      the detail page renders each signal with a HARD/SOFT badge + confidence %.
 
 ### B8. Production safety  ✅
 - [x] **Storm control / backpressure** (`SentinelEngine`): a global cap on NEW

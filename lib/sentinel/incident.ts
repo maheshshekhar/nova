@@ -19,7 +19,13 @@ export interface SentinelAlert {
     /** Provenance so the UI can badge "detected by Nova". */
     source: "nova-sentinel"
   }
-  annotations: { summary: string; description: string }
+  annotations: {
+    summary: string
+    description: string
+    /** Machine-readable confidence (0..1) and evidence for the dashboard. */
+    nova_confidence: string
+    nova_signals: string // JSON: { kind, message, severity, hard }[]
+  }
   startsAt: string
 }
 
@@ -90,7 +96,14 @@ export function decisionToAlert(decision: IncidentDecision, at: number = Date.no
       failure_type: failureType,
       source: "nova-sentinel",
     },
-    annotations: { summary, description },
+    annotations: {
+      summary,
+      description,
+      nova_confidence: decision.confidence.toFixed(2),
+      nova_signals: JSON.stringify(
+        decision.signals.map((s) => ({ kind: s.kind, message: s.message, severity: s.severity, hard: s.hard }))
+      ),
+    },
     startsAt: new Date(at).toISOString(),
   }
 }

@@ -292,6 +292,43 @@ export default function IncidentDetailPage({ params }: { params: Promise<{ id: s
         </p>
       </div>
 
+      {/* Detection evidence — the structured signals Nova Sentinel correlated into
+          this incident (only present when Sentinel opened it). */}
+      {record?.detectedBy === "nova-sentinel" && (record?.evidence?.length ?? 0) > 0 && (
+        <div className="card-glass rounded-lg px-5 py-4 border border-[var(--neon-blue)]/20">
+          <div className="flex items-center gap-2 mb-3">
+            <Sparkles className="w-4 h-4 text-[var(--neon-blue)]" />
+            <span className="text-xs font-mono font-semibold text-muted-foreground tracking-widest uppercase">
+              Detection Evidence
+            </span>
+            {record?.confidence != null && (
+              <span className="text-[10px] font-mono text-[var(--neon-blue)] ml-auto">
+                {Math.round(record.confidence * 100)}% confidence
+              </span>
+            )}
+          </div>
+          <ul className="flex flex-col gap-2">
+            {record!.evidence!.map((e, i) => (
+              <li key={i} className="flex items-start gap-2 text-sm">
+                <span
+                  className={`shrink-0 mt-0.5 text-[10px] font-mono font-bold border px-1.5 py-0.5 rounded ${
+                    e.hard
+                      ? "bg-[var(--neon-red)]/15 text-[var(--neon-red)] border-[var(--neon-red)]/30"
+                      : "bg-[var(--neon-yellow)]/15 text-[var(--neon-yellow)] border-[var(--neon-yellow)]/30"
+                  }`}
+                >
+                  {e.hard ? "HARD" : "SOFT"}
+                </span>
+                <span className="min-w-0">
+                  <span className="font-mono text-foreground">{e.kind}</span>
+                  <span className="text-foreground/70"> — {e.message}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Matched runbook — the dashboard recognises this failure mode and offers a
           pre-approved, one-click remediation that runs against the real cluster. */}
       {matchedRunbook && (

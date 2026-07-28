@@ -1,6 +1,26 @@
 import { NextRequest, NextResponse } from "next/server"
 import { listIncidents, createIncident } from "@/lib/incident-store"
-import type { FailureType, IncidentSeverity } from "@/lib/incident-types"
+import type { FailureType, IncidentSeverity, SentinelEvidence } from "@/lib/incident-types"
+
+/** Parse Nova Sentinel's structured evidence annotation (best-effort). */
+function parseEvidence(raw?: string): SentinelEvidence[] | undefined {
+  if (!raw) return undefined
+  try {
+    const arr = JSON.parse(raw)
+    if (!Array.isArray(arr)) return undefined
+    const out = arr
+      .filter((e) => e && typeof e.kind === "string" && typeof e.message === "string")
+      .map((e) => ({
+        kind: String(e.kind),
+        message: String(e.message),
+        severity: String(e.severity ?? "warning"),
+        hard: !!e.hard,
+      }))
+    return out.length ? out : undefined
+  } catch {
+    return undefined
+  }
+}
 
 // Alertmanager webhook. The Loki ruler fires ERROR-spike alerts (per service),
 // Alertmanager batches and POSTs them here, and we open a live incident — but
@@ -61,6 +81,10 @@ export async function POST(req: NextRequest) {
     const parsedStart = alert.startsAt ? new Date(alert.startsAt).getTime() : NaN
     const startedAt = Number.isNaN(parsedStart) ? Date.now() : parsedStart
 
+    const evidence = parseEvidence(alert.annotations?.nova_signals)
+    const confRaw = Number(alert.annotations?.nova_confidence)
+    const confidence = Number.isFinite(confRaw) && confRaw > 0 ? confRaw : undefined
+
     const incident = await createIncident({
       title,
       severity,
@@ -69,6 +93,8 @@ export async function POST(req: NextRequest) {
       startedAt,
       description,
       detectedBy: labels.source,
+      evidence,
+      confidence,
     })
     results.push({ service, id: incident.id, created: true })
   }
