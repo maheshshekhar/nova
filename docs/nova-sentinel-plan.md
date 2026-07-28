@@ -104,16 +104,16 @@ domain:
   severityRules: [ { when: { errorRatePct: ">5" }, severity: critical } ]
 ```
 
-### B0. Runtime architecture  ⬜
-- [ ] Ship a **companion Deployment `nova-sentinel`** (Node, shares `lib/` + config)
+### B0. Runtime architecture  ✅
+- [x] Ship a **companion Deployment `nova-sentinel`** (Node, shares `lib/` + config)
       in the Helm chart. **Always-on, watch-based — NOT a CronJob.**
-- [ ] Read-only k8s RBAC (watch pods, events, deployments, replicasets, configmaps,
-      secrets *existence only*, jobs). Resource limits. Kill switch / **dry-run mode**
-      (detect + log, don't open incidents — for tuning).
-- [ ] Opens incidents via the store / `POST /api/incidents`; **dedupes** against
-      incidents already created by `/api/alerts` (reuse per-service idempotency).
+- [x] Read-only k8s RBAC (pods, events, nodes, deployments, pods/log, metrics.k8s.io).
+      Resource limits. Kill switch / **dry-run mode** (detect + log, don't open
+      incidents — for tuning).
+- [x] Opens incidents via `/api/alerts` (Alertmanager-shaped POST), reusing its
+      per-service idempotency so it never double-fires with external alerts.
 
-### B1. Tier 1 — Kubernetes-native signals (build FIRST; most robust, no logs needed)  🚧 (pod extraction done)
+### B1. Tier 1 — Kubernetes-native signals (build FIRST; most robust, no logs needed)  ✅
 - [x] **Normalised `Signal` model** (`lib/sentinel/signal.ts`): `{ kind, service,
       namespace, severity, hard, message, source }` + `hard` vs `soft` classification.
 - [x] **Pure pod → signal extraction** (`lib/sentinel/extract.ts`,
@@ -151,7 +151,7 @@ domain:
       `engine.onPod`/`engine.onMemory`. `parseQuantity` for memory limits. 11 tests
       + engine integration.
 
-### B3. Incident creation with evidence (no auto-RCA)  🚧
+### B3. Incident creation with evidence (no auto-RCA)  ✅
 - [x] `decisionToAlert()` (`lib/sentinel/incident.ts`) — pure map from a correlator
       `IncidentDecision` to an Alertmanager-shaped payload (severity + failure_type +
       `source: nova-sentinel` provenance; evidence signals in the description). No LLM.
@@ -174,8 +174,9 @@ domain:
       `deploy/sentinel/Dockerfile` (tsx runtime).
 - [x] Tests: `PodServiceIndex` + engine (open/dedup/event-resolve/dry-run/recovery)
       in `lib/sentinel/engine.test.ts`. 454 tests green; helm renders clean.
-- [ ] Ensure the existing **"Analyse with AI"** action consumes that evidence with
-      `prompts/rca.md` on demand.
+- [x] Ensure the existing **"Analyse with AI"** action consumes that evidence with
+      `prompts/rca.md` on demand — already wired: the RCA context includes
+      `Description: ${incident.description}`, which carries Sentinel's evidence.
 - [ ] Retire the custom `nova/metrics-collector` + its `url:` config line once
       Sentinel is the detection backbone.
 
@@ -261,7 +262,7 @@ domain:
 - [ ] Optional: a dedicated signal **timeline** panel on incident detail (structured
       evidence beyond the description).
 
-### B8. Production safety  🚧
+### B8. Production safety  ✅
 - [x] **Storm control / backpressure** (`SentinelEngine`): a global cap on NEW
       incidents per window (`maxIncidentsPerMin`, sliding-window token accounting)
       sheds a cluster-wide meltdown instead of opening thousands of incidents.
