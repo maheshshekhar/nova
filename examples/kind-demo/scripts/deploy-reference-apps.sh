@@ -149,26 +149,26 @@ deploy_platform() {
 }
 
 # ── Custom Payment System (self-contained demo workload) ──────────────────────
-# Brings its OWN observability stack (Loki, Fluent Bit, Prometheus, Grafana,
-# metrics-collector) into the payment-monitoring namespace, then points Nova at
-# it. Nova ships nothing itself — it just plugs into this demo's backends.
+# Brings its OWN observability stack (Loki, Fluent Bit, Prometheus, Grafana)
+# into the payment-monitoring namespace, then points Nova at it. Nova ships
+# nothing itself — it just plugs into this demo's backends (metrics come from
+# Nova's in-process k8s reader / Prometheus, not an external collector).
 deploy_custom_payment() {
   command -v helm >/dev/null 2>&1 || error "helm not found (required for this demo's stack). Run: brew install helm"
   local ns="payment-monitoring"
   local K8S="examples/kind-demo/k8s"
   log "Deploying Custom Payment System (self-contained stack in '${ns}')..."
 
-  # Build + load the five locally-built images.
+  # Build + load the four locally-built images.
   build_image "nova/payment-service:latest"     "examples/kind-demo/payment-service/Dockerfile"     "examples/kind-demo/payment-service"
   build_image "nova/config-service:latest"       "examples/kind-demo/config-service/Dockerfile"       "examples/kind-demo/config-service"
   build_image "nova/transaction-service:latest"  "examples/kind-demo/transaction-service/Dockerfile"  "examples/kind-demo/transaction-service"
   build_image "nova/load-generator:latest"       "examples/kind-demo/load-generator/Dockerfile"       "examples/kind-demo/load-generator"
-  build_image "nova/metrics-collector:latest"    "examples/kind-demo/metrics-collector/Dockerfile"    "examples/kind-demo/metrics-collector"
-  for img in payment-service config-service transaction-service load-generator metrics-collector; do
+  for img in payment-service config-service transaction-service load-generator; do
     load_image "nova/${img}:latest"
   done
 
-  # metrics-server (cluster singleton) — pod CPU/memory for metrics-collector.
+  # metrics-server (cluster singleton) — pod CPU/memory for Nova's native reader.
   log "Installing metrics-server..."
   kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
   kubectl patch deployment metrics-server -n kube-system --type=json \
@@ -207,17 +207,17 @@ deploy_custom_payment() {
   done
   kubectl apply -f "$K8S/alertmanager-alias.yaml"
 
-  # App services + metrics-collector + loki-rules + dashboard production RBAC.
+  # App services + loki-rules + dashboard production RBAC.
   kubectl apply -f examples/custom-payment-system.yaml
 
   # Nudge Loki to pick up the loki-rules ConfigMap (mounted optionally).
   kubectl -n "$ns" rollout restart statefulset/loki >/dev/null 2>&1 || true
 
-  # Point Nova at THIS demo's backends and roll the dashboard.
+  # Point Nova at THIS demo's logs and roll the dashboard. (Metrics come from
+  # Nova's in-process k8s reader — cluster-wide, so no per-namespace wiring.)
   log "Pointing Nova at the ${ns} backends..."
   kubectl set env deployment/dashboard -n "$MON_NAMESPACE" \
-    LOKI_URL="http://loki.${ns}:3100" \
-    METRICS_COLLECTOR_URL="http://metrics-collector.${ns}:3001" >/dev/null
+    LOKI_URL="http://loki.${ns}:3100" >/dev/null
   kubectl rollout status deployment/dashboard -n "$MON_NAMESPACE" --timeout=120s || warn "dashboard restart pending"
 
   success "Custom Payment System deployed (healthy) with its own stack."

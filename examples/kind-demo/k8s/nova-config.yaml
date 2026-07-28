@@ -33,8 +33,8 @@ data:
     #
     #  1) kubernetes (default) — Nova reads pod/workload health (CPU / memory /
     #     pod status / deployments) from the Kubernetes API for EVERY workload,
-    #     zero config. (Today via the bundled collector at `url`; a built-in
-    #     informer reader replaces it soon. `http` is a legacy alias.)
+    #     zero config, in-process via the built-in informer reader (no external
+    #     collector). `http` is a legacy alias for this provider.
     #  2) prometheus — OPTIONAL: add REAL app metrics (error rate / latency / RPS)
     #     from a workload's OWN Prometheus. You declare the queries (or let the
     #     Signals tab at /settings generate them), so you always know exactly what
@@ -48,4 +48,3 @@ data:
     #     serviceLabel: job
     metrics:
       provider: kubernetes
-      url: ${METRICS_COLLECTOR_URL:-http://metrics-collector:3001}

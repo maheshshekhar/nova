@@ -30,7 +30,7 @@ persistence:
 |---|---|
 | `ai` | LLM provider, model, token budgets, temperature |
 | `logs` | Log backend + **log scope** (backend-neutral selectors) |
-| `metrics` | Metrics source (Prometheus PromQL, or the http collector) |
+| `metrics` | Metrics source (Prometheus PromQL, or the in-process Kubernetes reader) |
 | `persistence` | Incident/RCA/eval store (file, or a DB adapter) |
 | `dashboard` | Presentation curation — infra workloads, table columns, stat tiles, thresholds |
 | `detection` | Auto-detection source, impact signal, severity rules |

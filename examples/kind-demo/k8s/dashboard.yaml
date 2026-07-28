@@ -35,8 +35,6 @@ spec:
           env:
             - name: NOVA_CONFIG
               value: "/config/nova.config.yaml"
-            - name: METRICS_COLLECTOR_URL
-              value: "http://metrics-collector:3001"
             - name: LOKI_URL
               value: "http://loki:3100"
             - name: DATA_DIR

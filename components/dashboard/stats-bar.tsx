@@ -94,7 +94,7 @@ function AutoStatsBar() {
           tone: apps.length ? levelTone(evaluateHealth({ ...errDescriptor, thresholds: errThresholds }, errRate)) : "neutral",
           icon: AlertOctagon,
         }
-      : { label: "Avg Error Rate", value: "—", sub: "collector offline", tone: "neutral", icon: AlertOctagon }
+      : { label: "Avg Error Rate", value: "—", sub: "metrics unavailable", tone: "neutral", icon: AlertOctagon }
 
     // ── Healthy Services (real) ──
     const healthy = apps.filter((s) => s.status === "healthy").length
@@ -111,7 +111,7 @@ function AutoStatsBar() {
           tone: apps.length === 0 ? "neutral" : healthy === apps.length ? "good" : "warn",
           icon: CheckCircle2,
         }
-      : { label: "Healthy Services", value: "—", sub: "collector offline", tone: "neutral", icon: CheckCircle2 }
+      : { label: "Healthy Services", value: "—", sub: "metrics unavailable", tone: "neutral", icon: CheckCircle2 }
 
     // ── Open Incidents (real store) ──
     const incidentsTile: Tile = {
@@ -128,7 +128,7 @@ function AutoStatsBar() {
       icon: Shield,
     }
 
-    // ── Active Deployments (real collector) ──
+    // ── Active Deployments (real, from the k8s reader) ──
     const running = deployments.filter((d) => d.status === "running").length
     const failed = deployments.filter((d) => d.status === "failed").length
     const deployTile: Tile = {
@@ -159,7 +159,7 @@ function AutoStatsBar() {
           tone: levelTone(evaluateHealth(cpuDescriptor, avgCpu)),
           icon: Cpu,
         }
-      : { label: "CPU Utilization", value: "—", sub: available ? "no app services" : "collector offline", tone: "neutral", icon: Cpu }
+      : { label: "CPU Utilization", value: "—", sub: available ? "no app services" : "metrics unavailable", tone: "neutral", icon: Cpu }
     const memTile: Tile = available && apps.length
       ? {
           label: "Memory Utilization",
@@ -168,7 +168,7 @@ function AutoStatsBar() {
           tone: levelTone(evaluateHealth(memDescriptor, avgMem)),
           icon: MemoryStick,
         }
-      : { label: "Memory Utilization", value: "—", sub: available ? "no app services" : "collector offline", tone: "neutral", icon: MemoryStick }
+      : { label: "Memory Utilization", value: "—", sub: available ? "no app services" : "metrics unavailable", tone: "neutral", icon: MemoryStick }
 
     return [errTile, healthyTile, incidentsTile, deployTile, cpuTile, memTile]
   }, [realMetrics, config.infraWorkloads, config.thresholds, deployments, incidents])
@@ -225,7 +225,7 @@ function metricTileToTile(
   const descriptor = getDescriptor(key)
   const label = tile.label ?? descriptor.label
   if (!available || apps.length === 0) {
-    return { label, value: "—", sub: available ? "no app services" : "collector offline", tone: "neutral", icon: Activity }
+    return { label, value: "—", sub: available ? "no app services" : "metrics unavailable", tone: "neutral", icon: Activity }
   }
   const vals = apps
     .map((s) => s[key])

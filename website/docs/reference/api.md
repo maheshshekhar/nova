@@ -4,7 +4,7 @@ Nova's server exposes a small set of App Router endpoints. All are server-render
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/api/metrics` | GET | Per-service metrics (`?endpoint=metrics/services`), namespaces, deployments. Dispatches to the configured metrics source (Prometheus / collector). |
+| `/api/metrics` | GET | Per-service metrics (`?endpoint=metrics/services`), namespaces, deployments. Dispatches to the configured metrics source (Prometheus / in-process Kubernetes reader). |
 | `/api/logs` | GET | Real cluster logs for a service, via the configured `LogSource`. |
 | `/api/incidents` | GET / POST | List/filter the incident store; create a live incident. |
 | `/api/incidents/[id]` | GET / PATCH | Fetch or update (resolve) a single incident. |

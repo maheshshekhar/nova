@@ -36,7 +36,7 @@ flowchart TB
     subgraph api["Next.js API routes"]
         direction LR
         ANALYZE["/api/analyze<br/>streams RCA"]
-        METRICS["/api/metrics<br/>proxy → collector"]
+        METRICS["/api/metrics<br/>k8s API reader"]
         INJECT["/api/inject<br/>create k6 load Job"]
         ALERTS["/api/alerts<br/>Alertmanager webhook"]
     end
@@ -55,7 +55,6 @@ flowchart TB
         end
         subgraph mon["ns: nova-monitoring"]
             DASH["dashboard<br/>(containerised)"]
-            MC["metrics-collector"]
             LOKI["loki + fluent-bit<br/>(Helm)"]
             GRAF["grafana (Helm)"]
             PROM["prometheus + alertmanager<br/>(kube-prometheus-stack)"]
@@ -68,20 +67,19 @@ flowchart TB
 
     ANALYZE --> CLAUDE
     ANALYZE -->|LogQL| LOKI
-    METRICS -->|reads JSON| MC
+    METRICS -->|pod metrics| PSVC
     INJECT -->|K8s API| LG
 
     LG -->|hammers /api/checkout| PSVC
     PSVC -->|connection pool| PG
     PSVC -->|logs| LOKI
-    MC -->|pod metrics| PSVC
     LOKI -->|ruler ERROR-spike| PROM
     PROM -->|webhook| ALERTS
 ```
 
 In the demo, Nova's `LogSource` adapter is **Loki**: Fluent Bit ships pod logs into Loki with
 `{namespace, app, pod}` labels, and Nova pulls the incident window back via LogQL for RCA and
-the `/api/logs` viewer. `metrics-collector` aggregates pod health for the service table, a k6
+the `/api/logs` viewer. Nova's in-process Kubernetes reader aggregates pod health for the service table, a k6
 `load-generator` drives the connection-pool cascade that opens `INC-2847`, and the Loki ruler
 can fire log-driven alerts through Alertmanager to `/api/alerts`.
 
@@ -132,11 +130,11 @@ Idempotent and safe to re-run. It will:
 2. Create the `nova-platform` KinD cluster (maps container `:30000` → host `:3000`).
 3. Install and patch **metrics-server** for KinD.
 4. Create the `production`, `db-postgres` + `nova-monitoring` namespaces and the `ai-keys` secret.
-5. Build the six images (dashboard, payment-service, metrics-collector, load-generator,
+5. Build the five images (dashboard, payment-service, load-generator,
    config-service, transaction-service), **skipping any whose source hasn't changed**
    (stamps in `.build-cache/`).
 6. `kind load` each image into the cluster (only when rebuilt or missing).
-7. Deploy Postgres + metrics-collector (raw manifests) and the **observability stack via
+7. Deploy Postgres (raw manifests) and the **observability stack via
    Helm** (Loki, Fluent Bit, kube-prometheus-stack, Grafana — see
    [Observability stack](#observability-stack-helm)).
 8. Wait for everything to become ready, then run `verify`.
@@ -243,17 +241,10 @@ to re-run.
 | Route | Method | Purpose |
 |-------|--------|---------|
 | `/api/analyze` | `POST` | Streams the RCA. Body: `{ logs: string[], context: string }`. Picks OpenRouter if its key is set, else Anthropic. |
-| `/api/metrics` | `GET` | Proxies the metrics-collector. `?endpoint=metrics/services`. Returns `{ fallback: true }` (503) when unreachable. |
+| `/api/metrics` | `GET` | Pod/workload health read in-process from the Kubernetes API + metrics-server (or enriched from Prometheus). `?endpoint=metrics/services`. Returns `{ fallback: true }` (503) when unavailable. |
 | `/api/logs` | `GET` | Queries Loki (LogQL). `?service=&since=&until=&levels=&limit=`. Returns `{ fallback: true }` (503) when Loki is unreachable. |
 | `/api/alerts` | `POST` | Alertmanager webhook — opens a live incident from a Loki-ruler ERROR-spike alert (idempotent per service). |
 | `/api/inject` | `POST` / `DELETE` | Creates / deletes the `load-generator` k6 Job in `production` (needs the `dashboard-sa` RBAC). Fails silently if K8s is unavailable. |
-
-### metrics-collector (`:3001`, standalone Node/TS service)
-| Endpoint | Purpose |
-|----------|---------|
-| `/metrics` | Full cluster state. |
-| `/metrics/services` | Per-service aggregated pod metrics. |
-| `/health` | Liveness/readiness. |
 
 ### payment-service (`:8080`, in-cluster)
 `POST /api/checkout`, `GET /health`, `GET /metrics`, `GET /circuit-breaker`. The `/health`
@@ -287,7 +278,7 @@ stateDiagram-v2
 
 The dashboard is designed to be **identical with or without a cluster**:
 
-- **Service health table** shows `LIVE` (green) when `metrics-collector` is reachable and
+- **Service health table** shows `LIVE` (green) when pod metrics are readable and
   overrides matching rows with real pod CPU/memory/error-rate/status/pod-count; otherwise it
   shows `SIMULATED`.
 - **Logs page** streams real cluster logs from Loki (`LIVE — cluster logs`); before the first
@@ -328,7 +319,7 @@ rm -rf certs/                                # delete the generated cert + key
 | `kind`/`kubectl`/`docker`/`helm` not found | Install them (see [Prerequisites](#prerequisites)); ensure Docker Desktop is running. |
 | Dashboard not on `localhost:3000` | Run `./scripts/port-forward` (the pod must be Ready first). Check `/tmp/nova-portforward.log`. |
 | `https://nova` not loading | Ensure `mkcert` + `caddy` are installed, `/etc/hosts` has `127.0.0.1 nova`, the port-forward is up (`http://localhost:3000` works), and Caddy is running. Re-run `./scripts/cluster` or `sudo caddy start --config certs/Caddyfile`. |
-| Table stuck on `SIMULATED` | `metrics-collector` not reachable — check `kubectl get pods -n production` and `METRICS_COLLECTOR_URL`. The dashboard still works on simulated data. |
+| Table stuck on `SIMULATED` | Pod metrics not readable — check `kubectl get pods -n production` and that metrics-server is running (`kubectl top pods -n production`). The dashboard still works on simulated data. |
 | "Analyze with AI" errors | No AI key configured — set `OPENROUTER_API_KEY` (or `ANTHROPIC_API_KEY`) in the `ai-keys` secret. |
 | Helm release stuck / failed | `helm -n nova-monitoring status <loki\|grafana\|my-prometheus\|fluent-bit>`; re-run `./scripts/cluster` (installs are idempotent). |
 | Image change not picked up | Delete its build stamp in `.build-cache/` or the Docker image, then re-run `cluster`. |

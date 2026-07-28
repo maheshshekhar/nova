@@ -1,7 +1,7 @@
 # ── kube-prometheus-stack (pinned 87.19.0) ────────────────────────────────────
 # Install with release name `my-prometheus` (services become
 # my-prometheus-kube-prometheus-{prometheus,alertmanager}). Used only for:
-#   • Prometheus — additive metrics source (the app still reads metrics-collector).
+#   • Prometheus — additive metrics source (enriches Nova's native k8s reader).
 #   • Alertmanager — receives Loki-ruler alerts and webhooks Nova's /api/alerts.
 # This stack is the Custom Payment demo's OWN observability (Nova ships none):
 #   • Prometheus — the demo's metrics source.

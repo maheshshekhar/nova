@@ -44,7 +44,7 @@ contracts, so adding one is self-contained.
 
 | Port | Interface | Built-in adapters |
 |---|---|---|
-| Metrics | `MetricsSource` | `prometheus`, `http` (collector) |
+| Metrics | `MetricsSource` | `prometheus`, `kubernetes` (in-process reader) |
 | Logs | `LogSource` | `loki`, `elasticsearch`, `opensearch`, `mcp` |
 | Persistence | `PersistenceStore` | `file` (Mongo / Postgres / S3 contract-ready) |
 | AI | provider | `openrouter`, `anthropic`, `openai`, `azure`, `ollama` |

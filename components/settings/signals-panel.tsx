@@ -12,7 +12,7 @@ import type { DiscoveryReport, DiscoverySuggestion } from "@/lib/discovery/finge
 // Detection NEVER drives a live tile — this only proposes YAML (GitOps).
 
 // The request-metric signals discovery can suggest. CPU / memory / pod health
-// are always available from the k8s collector, so they are noted separately.
+// are always available from the Kubernetes API, so they are noted separately.
 const RED_SIGNALS: { key: string; label: string }[] = [
   { key: "errorRate", label: "Error rate" },
   { key: "latencyP50", label: "Latency p50" },
@@ -105,7 +105,7 @@ export function SignalsPanel({ pinnedKeys, provider }: SignalsPanelProps) {
           dashboard until you commit the generated YAML to <code>nova.config.yaml</code>.
         </p>
         <p className="text-[11px] text-muted-foreground">
-          CPU, memory and pod health are always available from the Kubernetes collector.
+          CPU, memory and pod health are always available from the Kubernetes API.
         </p>
       </div>
 

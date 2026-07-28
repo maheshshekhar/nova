@@ -14,7 +14,7 @@ import { Server } from "lucide-react"
 // Default column order when `dashboard.serviceTable.columns` is "auto". Every key
 // maps to a real field a source can report; a column is only rendered if at least
 // one service actually reports that field — so latency/RPS (Prometheus-only)
-// appear automatically when present and stay hidden for the CPU/mem-only collector.
+// appear automatically when present and stay hidden for the CPU/mem-only k8s reader.
 const AUTO_COLUMNS = ["status", "errorRate", "latencyP95", "avgCpu", "avgMemory", "rps", "readyPods"]
 
 function StatusDot({ status }: { status: string }) {
@@ -180,7 +180,7 @@ export function ServiceHealthTable() {
         {!realMetrics.available ? (
           <div className="py-10 px-4 flex flex-col items-center justify-center gap-2 text-center">
             <Server className="w-6 h-6 text-muted-foreground/50" />
-            <p className="text-xs font-mono text-muted-foreground">Metrics collector unreachable</p>
+            <p className="text-xs font-mono text-muted-foreground">Metrics unavailable</p>
             <p className="text-[10px] font-mono text-muted-foreground/70">
               No service data to display — waiting for a live source.
             </p>
@@ -190,7 +190,7 @@ export function ServiceHealthTable() {
             <Server className="w-6 h-6 text-muted-foreground/50" />
             <p className="text-xs font-mono text-muted-foreground">No application services reported</p>
             <p className="text-[10px] font-mono text-muted-foreground/70">
-              The collector is live but no application workloads were found.
+              Metrics are live but no application workloads were found.
             </p>
           </div>
         ) : (

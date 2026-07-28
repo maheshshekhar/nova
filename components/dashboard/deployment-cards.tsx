@@ -26,7 +26,7 @@ function agoLabel(iso: string): string {
   return `${Math.round(hr / 24)}d ago`
 }
 
-// Live deployments from the metrics collector (polled). Shared by the overview
+// Live deployments from the metrics API (polled). Shared by the overview
 // widget and the full deployments page.
 export function useLiveDeployments() {
   const [deployments, setDeployments] = useState<Deployment[]>([])
