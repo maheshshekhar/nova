@@ -85,6 +85,8 @@ spec:
               value: /tmp
             - name: NOVA_URL
               value: {{ .Values.sentinel.novaUrl | default (printf "http://%s:%v" (include "nova.fullname" .) .Values.service.port) | quote }}
+            - name: NOVA_CONFIG
+              value: /app/nova.config.yaml
             - name: SENTINEL_NAMESPACES
               value: {{ join "," .Values.sentinel.namespaces | quote }}
             - name: SENTINEL_DRY_RUN
@@ -101,9 +103,18 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            # Mount the shared nova.config.yaml so Sentinel reads the same
+            # `sentinel:` tuning block as the dashboard (single source of truth).
+            - name: config
+              mountPath: /app/nova.config.yaml
+              subPath: nova.config.yaml
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: config
+          configMap:
+            name: {{ include "nova.fullname" . }}-config
       {{- with .Values.sentinel.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
