@@ -125,6 +125,9 @@ sentinel:
   dedupeWindowSec: 600         # one incident per service until it recovers/expires
   softConfirmKinds: 2          # distinct SOFT signals needed to confirm
   sensitivity: medium          # low | medium | high (rate/volume spike aggressiveness)
+  mute: []                     # services to never open incidents for (e.g. [load-generator])
+  maxIncidentsPerMin: 20       # storm control: cap NEW incidents/min cluster-wide (0 = unlimited)
+  startupGraceSec: 0           # suppress emission for N sec after start (avoids initial-sync storms)
   logs:
     enabled: true              # tail pod logs for anomaly/signature/rate signals
     warmupLines: 50            # learn a service's normal templates before flagging novelty

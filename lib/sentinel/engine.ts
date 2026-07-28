@@ -23,6 +23,14 @@ export interface SentinelEngineOptions {
   analyzer?: LogAnalyzer
   /** When true, decisions are logged, never posted. */
   dryRun?: boolean
+  /** Services to never open incidents for (noisy jobs, load generators, …). */
+  mute?: Iterable<string>
+  /** Storm control: max NEW incidents opened per `rateWindowMs` (0 = unlimited). */
+  maxIncidentsPerWindow?: number
+  rateWindowMs?: number
+  /** Suppress incident emission for this long after start (still learns baselines
+   * and de-dups) so the initial informer sync of pre-existing state can't storm. */
+  startupGraceMs?: number
   logger?: (message: string) => void
   now?: () => number
 }
@@ -40,6 +48,12 @@ export class SentinelEngine {
   private readonly analyzer: LogAnalyzer
   private readonly sink: IncidentSink
   private readonly dryRun: boolean
+  private readonly mute: Set<string>
+  private readonly maxIncidents: number
+  private readonly rateWindowMs: number
+  private readonly startupGraceMs: number
+  private readonly startedAt: number
+  private readonly emitted: number[] = [] // recent emission timestamps (storm control)
   private readonly log: (message: string) => void
   private readonly now: () => number
 
@@ -49,8 +63,13 @@ export class SentinelEngine {
     this.index = opts.index ?? new PodServiceIndex()
     this.analyzer = opts.analyzer ?? new LogAnalyzer({ now: opts.now })
     this.dryRun = opts.dryRun ?? false
+    this.mute = new Set(opts.mute ?? [])
+    this.maxIncidents = opts.maxIncidentsPerWindow ?? 0
+    this.rateWindowMs = opts.rateWindowMs ?? 60_000
+    this.startupGraceMs = opts.startupGraceMs ?? 0
     this.log = opts.logger ?? ((m) => console.log(m))
     this.now = opts.now ?? Date.now
+    this.startedAt = this.now()
   }
 
   async onPod(pod: PodLike): Promise<void> {
@@ -90,15 +109,45 @@ export class SentinelEngine {
   }
 
   private async process(signals: Signal[]): Promise<void> {
-    if (signals.length === 0) return
-    const decisions = this.correlator.ingest(signals, this.now())
+    // Storm/precision guard 1 — drop muted services entirely (before correlation).
+    const kept = this.mute.size ? signals.filter((s) => !this.mute.has(s.service)) : signals
+    if (kept.length === 0) return
+    const decisions = this.correlator.ingest(kept, this.now())
     if (decisions.length === 0) return
+
+    const now = this.now()
+    // Storm/precision guard 2 — startup grace: suppress during the initial sync.
+    if (this.startupGraceMs > 0 && now - this.startedAt < this.startupGraceMs) {
+      for (const d of decisions) this.log(`[startup-grace] suppressed incident: ${d.reason}`)
+      return
+    }
+
+    // Storm/precision guard 3 — global rate cap (backpressure).
+    const admitted = this.admit(decisions.length, now)
+    if (admitted < decisions.length) {
+      this.log(`[storm-control] rate cap reached (${this.maxIncidents}/${Math.round(this.rateWindowMs / 1000)}s); suppressed ${decisions.length - admitted} incident(s)`)
+    }
+    const toEmit = decisions.slice(0, admitted)
+    if (toEmit.length === 0) return
+
     if (this.dryRun) {
-      for (const d of decisions) {
+      for (const d of toEmit) {
         this.log(`[dry-run] would open incident: ${d.reason} (confidence ${Math.round(d.confidence * 100)}%)`)
       }
       return
     }
-    await this.sink.post(decisions.map((d) => decisionToAlert(d, this.now())))
+    await this.sink.post(toEmit.map((d) => decisionToAlert(d, now)))
+  }
+
+  /** Token accounting for the storm cap. Returns how many of `n` may be emitted
+   * now, recording those that are. 0 maxIncidents ⇒ unlimited. */
+  private admit(n: number, now: number): number {
+    if (this.maxIncidents <= 0) return n
+    const cutoff = now - this.rateWindowMs
+    while (this.emitted.length && this.emitted[0] < cutoff) this.emitted.shift()
+    const room = Math.max(0, this.maxIncidents - this.emitted.length)
+    const grant = Math.min(room, n)
+    for (let i = 0; i < grant; i++) this.emitted.push(now)
+    return grant
   }
 }

@@ -177,13 +177,17 @@ export function start(): void {
     correlator: build.correlator,
     analyzer: build.analyzer,
     dryRun: cfg.dryRun,
+    mute: cfg.mute,
+    maxIncidentsPerWindow: cfg.maxIncidentsPerMin,
+    rateWindowMs: 60_000,
+    startupGraceMs: cfg.startupGraceSec * 1000,
     logger: log,
   })
   const tailer = build.logsEnabled ? makeLogTailer(kc, engine) : null
 
   const scopes = cfg.namespaces.length > 0 ? cfg.namespaces : [null]
   log(
-    `starting — nova=${novaUrl} scope=${cfg.namespaces.length ? cfg.namespaces.join(",") : "all namespaces"} dryRun=${cfg.dryRun} logs=${build.logsEnabled} impact=${cfg.impact.enabled} absence=${cfg.absence.enabled} sensitivity=${cfg.sensitivity}`
+    `starting — nova=${novaUrl} scope=${cfg.namespaces.length ? cfg.namespaces.join(",") : "all namespaces"} dryRun=${cfg.dryRun} logs=${build.logsEnabled} impact=${cfg.impact.enabled} absence=${cfg.absence.enabled} sensitivity=${cfg.sensitivity} mute=[${cfg.mute.join(",")}] maxPerMin=${cfg.maxIncidentsPerMin}`
   )
 
   const onPod = (obj: k8s.V1Pod) => {
