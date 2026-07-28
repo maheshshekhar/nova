@@ -30,7 +30,7 @@ const ALLOWED = new Set(["config-service", "transaction-service"])
 // Source-of-truth values the dashboard restores for config-service's required
 // config. Each models a different config KIND so remediation can name exactly
 // what it fixed (env var / Secret / ConfigMap key). Keep in sync with the
-// REQUIRED_CONFIG map in config-service/index.js.
+// REQUIRED_CONFIG map in the config-service (payment-app-demo repo).
 const CONFIG_RESTORE: Record<string, { value: string; kind: string }> = {
   FEATURE_FLAGS_URL: { value: "http://config-service/flags", kind: "environment variable" },
   CONFIG_SIGNING_KEY: { value: "sk_live_rotated_signing_key", kind: "Secret" },

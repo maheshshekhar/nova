@@ -20,8 +20,8 @@ spec:
     spec:
       containers:
         - name: transaction-service
-          image: nova/transaction-service:latest
-          imagePullPolicy: Never
+          image: maheshekhar/transaction-service:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           env:

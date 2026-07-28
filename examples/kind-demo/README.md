@@ -134,9 +134,11 @@ Idempotent and safe to re-run. It will:
 3. Install and patch **metrics-server** for KinD.
 4. Create the `production`, `db-postgres` + `nova-monitoring` namespaces and the `ai-keys` secret.
 5. Build the Nova images — the **dashboard** (the product) and the **Sentinel**
-   companion (read-only early detection) — plus the demo-workload images,
-   **skipping any whose source hasn't changed** (stamps in `.build-cache/`).
-6. `kind load` each image into the cluster (only when rebuilt or missing).
+   companion (read-only early detection), **skipping any whose source hasn't changed**.
+6. `kind load` the Nova images into the cluster (only when rebuilt or missing).
+   The demo-workload images (payment-service, config-service, transaction-service,
+   load-generator) are **pulled from Docker Hub** — they live in a separate
+   `payment-app-demo` repo that builds and pushes them.
 7. Deploy **Nova via the same Helm chart used in production** (`deploy/helm/nova`
    with `k8s/nova-values.yaml` — dashboard + Sentinel + RBAC + config + PVC), then
    Postgres and the **observability stack via Helm** (Loki, Fluent Bit,

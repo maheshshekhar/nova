@@ -21,8 +21,8 @@ spec:
     spec:
       containers:
         - name: config-service
-          image: nova/config-service:latest
-          imagePullPolicy: Never
+          image: maheshekhar/config-service:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           env:

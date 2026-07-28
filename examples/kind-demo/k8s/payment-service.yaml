@@ -17,8 +17,8 @@ spec:
     spec:
       containers:
         - name: payment-service
-          image: nova/payment-service:latest
-          imagePullPolicy: Never
+          image: maheshekhar/payment-service:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           env:

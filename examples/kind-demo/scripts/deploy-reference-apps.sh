@@ -117,31 +117,6 @@ ensure_ns() {
   kubectl get namespace "$ns" >/dev/null 2>&1 || kubectl create namespace "$ns"
 }
 
-# Build a local image only if it is not already present (Docker layer cache still
-# applies). Force a rebuild with: docker rmi <tag>.
-build_image() { # <tag> <dockerfile> <context>
-  local tag="$1" dockerfile="$2" context="$3"
-  if docker image inspect "$tag" >/dev/null 2>&1; then
-    warn "$tag already built — skipping (docker rmi $tag to force a rebuild)"
-  else
-    log "Building $tag..."
-    docker build -t "$tag" -f "$dockerfile" "$context" || error "Build failed: $tag"
-    success "$tag built"
-  fi
-}
-
-# Load a local image into the KinD cluster only if it is not already there.
-load_image() { # <tag>
-  local tag="$1"
-  if docker exec "${CLUSTER_NAME}-control-plane" crictl images 2>/dev/null | grep -q "${tag%%:*}"; then
-    warn "$tag already in cluster — skipping load"
-  else
-    log "Loading $tag into KinD..."
-    kind load docker-image "$tag" --name "$CLUSTER_NAME" || error "kind load failed: $tag"
-    success "$tag loaded"
-  fi
-}
-
 # ── Nova monitoring platform (single source of truth: ./platform) ─────────────
 # Normally deployed by `cluster`; re-runnable here to repair/redeploy.
 deploy_platform() {
@@ -159,14 +134,8 @@ deploy_custom_payment() {
   local K8S="examples/kind-demo/k8s"
   log "Deploying Custom Payment System (self-contained stack in '${ns}')..."
 
-  # Build + load the four locally-built images.
-  build_image "nova/payment-service:latest"     "examples/kind-demo/payment-service/Dockerfile"     "examples/kind-demo/payment-service"
-  build_image "nova/config-service:latest"       "examples/kind-demo/config-service/Dockerfile"       "examples/kind-demo/config-service"
-  build_image "nova/transaction-service:latest"  "examples/kind-demo/transaction-service/Dockerfile"  "examples/kind-demo/transaction-service"
-  build_image "nova/load-generator:latest"       "examples/kind-demo/load-generator/Dockerfile"       "examples/kind-demo/load-generator"
-  for img in payment-service config-service transaction-service load-generator; do
-    load_image "nova/${img}:latest"
-  done
+  # App images are pulled from Docker Hub (built + pushed from the payment-app-demo
+  # repo). Nothing to build/load here.
 
   # metrics-server (cluster singleton) — pod CPU/memory for Nova's native reader.
   log "Installing metrics-server..."

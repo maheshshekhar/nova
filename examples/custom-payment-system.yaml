@@ -15,9 +15,9 @@
 # The dashboard RBAC below references the Nova dashboard's ServiceAccount
 # (named `dashboard` in nova-monitoring), so the Nova dashboard must already be up.
 #
-# Images (built locally, loaded into KinD — never pulled):
-#   nova/payment-service:latest  nova/config-service:latest
-#   nova/transaction-service:latest  nova/load-generator:latest
+# Images (pulled from Docker Hub — build + push from the payment-app-demo repo):
+#   maheshekhar/payment-service:latest  maheshekhar/config-service:latest
+#   maheshekhar/transaction-service:latest  maheshekhar/load-generator:latest
 # ═══════════════════════════════════════════════════════════════════════════════
 
 apiVersion: v1
@@ -154,8 +154,8 @@ spec:
     spec:
       containers:
         - name: payment-service
-          image: nova/payment-service:latest
-          imagePullPolicy: Never
+          image: maheshekhar/payment-service:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           env:
@@ -235,8 +235,8 @@ spec:
     spec:
       containers:
         - name: config-service
-          image: nova/config-service:latest
-          imagePullPolicy: Never
+          image: maheshekhar/config-service:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           env:
@@ -301,8 +301,8 @@ spec:
     spec:
       containers:
         - name: transaction-service
-          image: nova/transaction-service:latest
-          imagePullPolicy: Never
+          image: maheshekhar/transaction-service:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           env:
@@ -459,8 +459,8 @@ roleRef:
 #       restartPolicy: Never
 #       containers:
 #         - name: k6
-#           image: nova/load-generator:latest
-#           imagePullPolicy: Never
+#           image: maheshekhar/load-generator:latest
+#           imagePullPolicy: IfNotPresent
 #           env:
 #             - name: TARGET_URL
 #               value: "http://payment-service/api/checkout"
