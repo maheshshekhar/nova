@@ -1,0 +1,43 @@
+{{- if .Values.rbac.create }}
+# Read-only cluster access for Nova's in-process metrics reader (the native
+# replacement for the external metrics-collector). Only needed for the default
+# `metrics.provider: kubernetes`; harmless otherwise. Strictly read-only.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "nova.fullname" . }}
+  labels:
+    {{- include "nova.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "nova.fullname" . }}-metrics-reader
+  labels:
+    {{- include "nova.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "nova.fullname" . }}-metrics-reader
+  labels:
+    {{- include "nova.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "nova.fullname" . }}-metrics-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "nova.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
