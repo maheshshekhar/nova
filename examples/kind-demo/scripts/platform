@@ -2,14 +2,17 @@
 set -e
 
 # ─────────────────────────────────────────────────────────────────────────────
-# platform — deploy ONLY the Nova dashboard onto a running cluster.
+# platform — deploy Nova (dashboard + Sentinel) onto a running cluster via Helm.
 #
-# Nova is the product: a single AI dashboard that plugs into whatever
-# observability a workload already exposes. The platform therefore ships nothing
-# but Nova itself — no Loki, Prometheus, Grafana, Fluent Bit or metrics-server.
-# Each demo workload brings its OWN stack (logs, metrics, Grafana, alert rules);
-# you then point Nova at that workload's backends (deploy-reference-apps.sh does
-# this automatically for the bundled Custom Payment System).
+# Nova is the product: a single AI dashboard (plus the read-only Sentinel
+# early-detection companion) that plugs into whatever observability a workload
+# already exposes. It is deployed with the SAME Helm chart used in production
+# (deploy/helm/nova) — only the values differ (local images, in-cluster
+# backends), so local == prod. The platform ships nothing but Nova itself — no
+# Loki, Prometheus, Grafana, Fluent Bit. Each demo workload brings its OWN stack
+# (logs, metrics, Grafana, alert rules); you then point Nova at that workload's
+# backends (deploy-reference-apps.sh does this automatically for the bundled
+# Custom Payment System).
 #
 # Invoked automatically at the end of `cluster`; re-runnable to repair/redeploy.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -42,6 +45,7 @@ K8S="examples/kind-demo/k8s"
 # ── Prerequisites ─────────────────────────────────────────────────────────────
 command -v kubectl >/dev/null 2>&1 || error "kubectl not found. Run: brew install kubectl"
 command -v docker >/dev/null 2>&1  || error "Docker not found. Install Docker Desktop."
+command -v helm >/dev/null 2>&1    || error "helm not found. Run: brew install helm"
 kubectl cluster-info >/dev/null 2>&1 || error "No reachable cluster. Run ./examples/kind-demo/scripts/cluster first."
 
 echo ""
@@ -49,7 +53,7 @@ echo -e "${CYAN}╔════════════════════�
 echo -e "${CYAN}║   Nova dashboard (the product)                ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
 echo ""
-log "Deploying Nova dashboard → namespace '${MON_NAMESPACE}'..."
+log "Deploying Nova (dashboard + Sentinel) → namespace '${MON_NAMESPACE}'..."
 
 kubectl get namespace "$MON_NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$MON_NAMESPACE"
 
@@ -65,42 +69,51 @@ else
     --dry-run=client -o yaml | kubectl apply -f -
 fi
 
-# Nova dashboard image — build only if missing (docker rmi to force a rebuild).
-if docker image inspect "nova/dashboard:latest" >/dev/null 2>&1; then
-  warn "nova/dashboard:latest already built — skipping (docker rmi nova/dashboard:latest to rebuild)"
-else
-  log "Building nova/dashboard:latest..."
-  docker build -t "nova/dashboard:latest" -f "Dockerfile" "." || error "Build failed: nova/dashboard:latest"
-  success "nova/dashboard:latest built"
-fi
+# ── Nova images (built locally, kind-loaded — never pulled) ───────────────────
+# build_and_load: build the image if missing, then load it into KinD if absent.
+build_and_load() {
+  local image="$1" dockerfile="$2" ctx="${3:-.}" short="${1%%:*}"
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    warn "$image already built — skipping (docker rmi $image to rebuild)"
+  else
+    log "Building $image..."
+    docker build -t "$image" -f "$dockerfile" "$ctx" || error "Build failed: $image"
+    success "$image built"
+  fi
+  if docker exec "${CLUSTER_NAME}-control-plane" crictl images 2>/dev/null | grep -q "$short"; then
+    warn "$image already in cluster — skipping load"
+  else
+    log "Loading $image into KinD..."
+    kind load docker-image "$image" --name "$CLUSTER_NAME" || error "kind load failed: $image"
+    success "$image loaded"
+  fi
+}
 
-if docker exec "${CLUSTER_NAME}-control-plane" crictl images 2>/dev/null | grep -q "nova/dashboard"; then
-  warn "nova/dashboard:latest already in cluster — skipping load"
-else
-  log "Loading nova/dashboard:latest into KinD..."
-  kind load docker-image "nova/dashboard:latest" --name "$CLUSTER_NAME" || error "kind load failed"
-  success "nova/dashboard:latest loaded"
-fi
+# The Nova dashboard (the product) + the Sentinel companion (read-only early
+# detection). Both ship as SEPARATE images — exactly as in production.
+build_and_load "nova/dashboard:latest" "Dockerfile"
+build_and_load "nova/sentinel:latest"  "deploy/sentinel/Dockerfile"
 
 # ── metrics-server (pod CPU/memory for Nova's native metrics reader) ──────────
 # Nova's dashboard reads pod/deployment/namespace health directly from the
-# Kubernetes API IN-PROCESS (no external metrics-collector sidecar); pod CPU/
-# memory come from metrics-server. Idempotent: re-applying is a no-op if it's
-# already installed. (For clusters that already expose Prometheus, point Nova at
-# it with metrics.provider: prometheus.)
+# Kubernetes API IN-PROCESS (no external collector); pod CPU/memory come from
+# metrics-server. Idempotent: re-applying is a no-op if it's already installed.
 log "Installing metrics-server (pod CPU/memory source)..."
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 kubectl patch deployment metrics-server -n kube-system --type=json \
   -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' \
   2>/dev/null || true
 
-kubectl apply -f "$K8S/dashboard-rbac.yaml"   # dashboard-sa + read-only metrics RBAC
-kubectl apply -f "$K8S/nova-config.yaml"       # all-namespace log scope + backend URLs
-kubectl apply -f "$K8S/dashboard.yaml"
-
-log "Waiting for the dashboard to be ready..."
-kubectl wait --for=condition=available deployment/dashboard -n "$MON_NAMESPACE" --timeout=180s \
-  || warn "dashboard not ready yet"
+# ── Deploy Nova via the SAME Helm chart used in production ─────────────────────
+# One chart, one definition — local == prod. The kind values (k8s/nova-values.yaml)
+# only swap in local images + in-cluster backends. This creates the dashboard, its
+# read-only metrics RBAC, the config ConfigMap, the incident-store PVC, AND the
+# Sentinel companion (values sentinel.enabled: true).
+log "Installing the Nova Helm chart (dashboard + Sentinel) → '${MON_NAMESPACE}'..."
+helm upgrade --install nova deploy/helm/nova \
+  -n "$MON_NAMESPACE" -f "$K8S/nova-values.yaml" \
+  --wait --timeout 4m || error "Helm install failed"
+success "Nova deployed (dashboard + Sentinel companion)"
 
 # ── Serve: background port-forward on :3000 (+ optional trusted https://nova) ──
 log "Starting background port-forward (dashboard:3000)..."

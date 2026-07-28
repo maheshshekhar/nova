@@ -54,7 +54,8 @@ flowchart TB
             PG[("postgres<br/>max_connections = 5")]
         end
         subgraph mon["ns: nova-monitoring"]
-            DASH["dashboard<br/>(containerised)"]
+            DASH["dashboard<br/>(Helm)"]
+            SENT["sentinel<br/>(read-only companion)"]
             LOKI["loki + fluent-bit<br/>(Helm)"]
             GRAF["grafana (Helm)"]
             PROM["prometheus + alertmanager<br/>(kube-prometheus-stack)"]
@@ -75,6 +76,8 @@ flowchart TB
     PSVC -->|logs| LOKI
     LOKI -->|ruler ERROR-spike| PROM
     PROM -->|webhook| ALERTS
+    SENT -->|watch pods/events/logs| PSVC
+    SENT -->|early incident| ALERTS
 ```
 
 In the demo, Nova's `LogSource` adapter is **Loki**: Fluent Bit ships pod logs into Loki with
@@ -130,13 +133,14 @@ Idempotent and safe to re-run. It will:
 2. Create the `nova-platform` KinD cluster (maps container `:30000` → host `:3000`).
 3. Install and patch **metrics-server** for KinD.
 4. Create the `production`, `db-postgres` + `nova-monitoring` namespaces and the `ai-keys` secret.
-5. Build the five images (dashboard, payment-service, load-generator,
-   config-service, transaction-service), **skipping any whose source hasn't changed**
-   (stamps in `.build-cache/`).
+5. Build the Nova images — the **dashboard** (the product) and the **Sentinel**
+   companion (read-only early detection) — plus the demo-workload images,
+   **skipping any whose source hasn't changed** (stamps in `.build-cache/`).
 6. `kind load` each image into the cluster (only when rebuilt or missing).
-7. Deploy Postgres (raw manifests) and the **observability stack via
-   Helm** (Loki, Fluent Bit, kube-prometheus-stack, Grafana — see
-   [Observability stack](#observability-stack-helm)).
+7. Deploy **Nova via the same Helm chart used in production** (`deploy/helm/nova`
+   with `k8s/nova-values.yaml` — dashboard + Sentinel + RBAC + config + PVC), then
+   Postgres and the **observability stack via Helm** (Loki, Fluent Bit,
+   kube-prometheus-stack, Grafana — see [Observability stack](#observability-stack-helm)).
 8. Wait for everything to become ready, then run `verify`.
 9. **Start the dashboard port-forward** on `localhost:3000` in the background — no manual step.
 10. If `mkcert` + `caddy` are installed, install the local CA, generate certs (reused across
@@ -244,7 +248,7 @@ to re-run.
 | `/api/metrics` | `GET` | Pod/workload health read in-process from the Kubernetes API + metrics-server (or enriched from Prometheus). `?endpoint=metrics/services`. Returns `{ fallback: true }` (503) when unavailable. |
 | `/api/logs` | `GET` | Queries Loki (LogQL). `?service=&since=&until=&levels=&limit=`. Returns `{ fallback: true }` (503) when Loki is unreachable. |
 | `/api/alerts` | `POST` | Alertmanager webhook — opens a live incident from a Loki-ruler ERROR-spike alert (idempotent per service). |
-| `/api/inject` | `POST` / `DELETE` | Creates / deletes the `load-generator` k6 Job in `production` (needs the `dashboard-sa` RBAC). Fails silently if K8s is unavailable. |
+| `/api/inject` | `POST` / `DELETE` | Creates / deletes the `load-generator` k6 Job in `production` (needs the `dashboard` SA RBAC). Fails silently if K8s is unavailable. |
 
 ### payment-service (`:8080`, in-cluster)
 `POST /api/checkout`, `GET /health`, `GET /metrics`, `GET /circuit-breaker`. The `/health`

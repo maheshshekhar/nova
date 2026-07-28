@@ -45,6 +45,9 @@ check "postgres deployment ready" \
 check "dashboard deployment ready" \
   "kubectl get deployment dashboard -n $MON_NAMESPACE | grep -E '1/1'"
 
+check "sentinel companion deployment ready" \
+  "kubectl get deployment dashboard-sentinel -n $MON_NAMESPACE | grep -E '1/1'"
+
 check "ai-keys secret exists (nova-monitoring)" \
   "kubectl get secret ai-keys -n $MON_NAMESPACE"
 

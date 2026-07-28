@@ -1,0 +1,95 @@
+# ── Kind-demo values for the Nova Helm chart ─────────────────────────────────
+# This is the SAME chart deployed in production (deploy/helm/nova) — only the
+# values differ (local images, in-cluster backends). Local == prod: one chart,
+# one definition, everywhere.
+#
+# Applied by examples/kind-demo/scripts/platform:
+#   helm upgrade --install nova deploy/helm/nova -n nova-monitoring -f this-file
+#
+# `fullnameOverride: dashboard` keeps every resource named `dashboard*` so the
+# demo's Service/Deployment stay `dashboard` (port-forward, Alertmanager webhook
+# at dashboard.nova-monitoring:3000, and the scripts all keep working).
+fullnameOverride: dashboard
+
+# Locally-built images, kind-loaded — never pulled from a registry.
+image:
+  repository: nova/dashboard
+  tag: latest
+  pullPolicy: Never
+
+# Reuse the `ai-keys` Secret the platform script creates (real keys are
+# git-ignored; copy k8s/secret.yaml.template → k8s/secret.yaml to add them).
+secret:
+  create: false
+  existingSecret: ai-keys
+
+# Plain (non-secret) env — mirrors the old raw dashboard.yaml.
+extraEnv:
+  - name: OPENROUTER_MODEL
+    value: anthropic/claude-sonnet-4-6
+  - name: ANTHROPIC_MODEL
+    value: claude-sonnet-4-5-20251001
+
+# The complete nova.config.yaml — rendered into the `dashboard-config` ConfigMap
+# and ALSO mounted into the Sentinel companion (single source of truth).
+novaConfig:
+  logs:
+    provider: loki
+    url: ${LOKI_URL:-http://loki:3100}
+    # Watch every namespace Fluent Bit ships; load-generator is synthetic noise.
+    scope:
+      include:
+        - { namespace: { regex: ".+" } }
+      exclude:
+        - { service: load-generator }
+  # Start with a REAL, empty incident store — no seeded demo history.
+  persistence:
+    provider: file
+    seed: none
+    dataDir: /data
+  # Pod/workload health read in-process from the Kubernetes API + metrics-server
+  # (no external collector). Switch to `prometheus` to add app RED metrics.
+  metrics:
+    provider: kubernetes
+  ai:
+    provider: openrouter
+    apiKeyEnv: OPENROUTER_API_KEY
+  features:
+    chat: true
+    eval: true
+    autoRemediation: false
+  # ── Nova Sentinel — zero-instrumentation early detection ──
+  # Tuning for the companion Deployment enabled below. Watches Pods + Events +
+  # pod logs and opens evidenced incidents BEFORE Prometheus alerts fire.
+  sentinel:
+    enabled: true
+    namespaces: [] # [] = all namespaces
+    softConfirmKinds: 2
+    logs:
+      enabled: true
+    # On-demand AI judgment for ambiguous soft-signal clusters. Precision-first:
+    # with no AI key (or on any error) it HOLDS — it never opens a false incident.
+    aiJudge:
+      enabled: true
+      maxPerMin: 10
+      minConfidence: 0.6
+
+# Deploy the Sentinel companion — a separate read-only image, exactly as in prod.
+sentinel:
+  enabled: true
+  image:
+    repository: nova/sentinel
+    tag: latest
+    pullPolicy: Never
+  namespaces: [] # all namespaces
+  dryRun: false
+
+# Incident store lives on a PVC backed by kind's default local-path StorageClass.
+# (Data is cluster-scoped: `kind delete` wipes it, like any real PVC teardown.)
+persistence:
+  enabled: true
+  size: 1Gi
+
+# No external ingress in the demo — the platform script port-forwards :3000.
+ingress:
+  enabled: false
