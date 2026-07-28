@@ -436,9 +436,9 @@ drives a connection‑pool cascade — lives entirely under
 of the core product (the boundary test enforces the app never imports it).
 
 ```bash
-./examples/kind-demo/scripts/cluster        # create the cluster + deploy infra & observability
-./examples/kind-demo/scripts/deploy-app     # deploy the demo workloads
-./examples/kind-demo/scripts/inject-failure # trigger the incident
+./examples/kind-demo/scripts/cluster                    # create the cluster + Nova (dashboard + Sentinel)
+./examples/kind-demo/scripts/deploy-reference-apps.sh   # choose 5) Custom Payment System (app + its own observability)
+./examples/kind-demo/scripts/inject-failure             # trigger the incident
 ```
 
 See **[`examples/kind-demo/README.md`](examples/kind-demo/README.md)** for the full guide —

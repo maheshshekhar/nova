@@ -12,11 +12,12 @@ entire detect → analyze → remediate loop end to end.
 ## Bring it up
 
 ```bash
-# 1. build images + install the whole stack into a local KinD cluster
+# 1. build the Nova images + install Nova (dashboard + Sentinel) into a local KinD cluster
 ./examples/kind-demo/scripts/cluster
 
-# 2. deploy the demo application (payment / config / transaction services)
-./examples/kind-demo/scripts/deploy-app
+# 2. deploy the demo workload — choose 5) Custom Payment System
+#    (payment/config/transaction services + Postgres + its own Loki/Prometheus/Grafana)
+./examples/kind-demo/scripts/deploy-reference-apps.sh
 
 # 3. add your AI key so RCA can generate (optional but recommended)
 kubectl -n nova-monitoring create secret generic ai-keys \

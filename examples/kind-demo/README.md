@@ -140,24 +140,27 @@ Idempotent and safe to re-run. It will:
    load-generator) are **pulled from Docker Hub** — they live in a separate
    `payment-app-demo` repo that builds and pushes them.
 7. Deploy **Nova via the same Helm chart used in production** (`deploy/helm/nova`
-   with `k8s/nova-values.yaml` — dashboard + Sentinel + RBAC + config + PVC), then
-   Postgres and the **observability stack via Helm** (Loki, Fluent Bit,
-   kube-prometheus-stack, Grafana — see [Observability stack](#observability-stack-helm)).
+   with `k8s/nova-values.yaml` — dashboard + Sentinel + RBAC + config + PVC). The
+   demo workload and its **observability stack** (Loki, Fluent Bit,
+   kube-prometheus-stack, Grafana) come next, with the Custom Payment System
+   deploy — see [Observability stack](#observability-stack-helm).
 8. Wait for everything to become ready, then run `verify`.
 9. **Start the dashboard port-forward** on `localhost:3000` in the background — no manual step.
 10. If `mkcert` + `caddy` are installed, install the local CA, generate certs (reused across
     teardowns), and start **Caddy** to serve `https://nova`, `https://grafana` and
     `https://alertmanager`. Binding port 443 prompts for `sudo`.
 
-### 3. Deploy the demo workloads
+### 3. Deploy the demo workload
 
 ```bash
-./scripts/deploy-app
+./scripts/deploy-reference-apps.sh   # choose: 5) Custom Payment System
 ```
 
-Rolls out `payment-service`, `config-service` and `transaction-service` into the `production`
-namespace (Postgres in `db-postgres` is left untouched, so you can redeploy the app without
-dropping the database).
+The **Custom Payment System** is self-contained: it deploys Postgres (`db-postgres`), the
+`payment-service` / `config-service` / `transaction-service` (`production`) — images pulled
+from Docker Hub — and its OWN observability stack (Loki, Fluent Bit, Prometheus + Alertmanager,
+Grafana in `payment-monitoring`), then points Nova at it. Other workloads (OpenTelemetry Demo,
+Online Boutique, Sock Shop, Prometheus example) are on the same menu.
 
 ### 4. Open the dashboard
 
@@ -198,8 +201,9 @@ Two more failure modes are available: `./scripts/inject-config-failure` and
 
 ## Observability stack (Helm)
 
-The observability components are deployed with Helm using pinned charts and the values files
-under [`k8s/`](k8s). Release/full names are pinned so the in-cluster Service DNS stays stable
+The observability components ship WITH the Custom Payment System workload (deployed by
+`deploy-reference-apps.sh`), using Helm with pinned charts and the values files under
+[`k8s/`](k8s). Release/full names are pinned so the in-cluster Service DNS stays stable
 (`loki:3100`, `grafana:3000`, `alertmanager:9093`) — the dashboard needs no changes.
 
 | Component | Chart (pinned) | Values | Notes |
@@ -209,7 +213,8 @@ under [`k8s/`](k8s). Release/full names are pinned so the in-cluster Service DNS
 | Prometheus + Alertmanager | `prometheus-community/kube-prometheus-stack@87.19.0` | [`k8s/prometheus-values.yaml`](k8s/prometheus-values.yaml) | Grafana disabled; only `service`-labeled alerts → Nova webhook |
 | Grafana | `grafana/grafana@10.5.15` | [`k8s/grafana-values.yaml`](k8s/grafana-values.yaml) | anon-admin, Loki + Prometheus datasources |
 
-Postgres remains a raw manifest ([`k8s/postgres.yaml`](k8s/postgres.yaml)) — its deliberate
+Postgres is part of the Custom Payment System manifest
+([`../custom-payment-system.yaml`](../custom-payment-system.yaml)) — its deliberate
 `max_connections=5` misconfiguration is the fault the demo exercises, so it's kept explicit.
 The Alertmanager alias Service ([`k8s/alertmanager-alias.yaml`](k8s/alertmanager-alias.yaml))
 maps `alertmanager:9093` to the kube-prometheus-stack Alertmanager pod so the Loki ruler and
@@ -224,8 +229,7 @@ to re-run.
 
 | Script | What it does |
 |--------|--------------|
-| `cluster` | Creates the cluster, builds/loads images, deploys infra + observability (Helm), verifies, starts the background port-forward, and (if mkcert + caddy are installed) serves `https://nova`. |
-| `deploy-app` | Deploys `payment-service`, `config-service`, `transaction-service` into `production` (Postgres in `db-postgres` is left intact). |
+| `cluster` | Creates the cluster, builds/loads the Nova images, deploys Nova (dashboard + Sentinel via Helm), verifies, starts the background port-forward, and (if mkcert + caddy are installed) serves `https://nova`. |
 | `verify` | Health-checks the cluster (namespaces, deployments, secret, metrics-server). |
 | `inject-failure` | Builds/loads the k6 image, runs it as a Job, streams payment-service logs → Postgres pool cascade. |
 | `inject-config-failure` | Injects a config-service boot/config failure. |

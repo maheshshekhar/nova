@@ -6,8 +6,9 @@ set -e
 #
 # "Cluster up" now gives you the basic infra ready to observe anything:
 #   • the KinD cluster itself
-#   • the Nova monitoring platform (metrics-server, Loki, Fluent Bit, Prometheus,
-#     Grafana, and the Nova dashboard) — deployed by ./scripts/platform
+#   • the Nova platform (metrics-server + the Nova dashboard & Sentinel companion)
+#     — deployed by ./scripts/platform. Observability (Loki / Prometheus / Grafana)
+#     ships WITH each demo workload, not here.
 #
 # Then deploy workloads with:
 #
