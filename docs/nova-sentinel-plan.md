@@ -203,15 +203,24 @@ domain:
       `detection.logs` config block is folded into B6's `detection:` schema).
       Log signal kinds mapped to failure types in `incident.ts`.
 
-### B5. Tier 3 — Domain + business + absence signals  ⬜
-- [ ] Use **Domain Pack** `impactSignal` patterns as declared business signals
-      (e.g. payments: `pool.connect() timeout` = failed checkout) — matched against
-      logs the app already emits; declared once in config.
-- [ ] **Absence/baseline detection** for "checkouts not happening": baseline a
-      *countable* success signal (a metric or a success-log rate) and flag a **drop**.
-      (Explicitly documented: needs *some* countable signal — silence is undetectable.)
+### B5. Tier 3 — Domain + business + absence signals  🚧
+- [x] Use **Domain Pack** `impactSignal` patterns as declared business signals
+      (`lib/sentinel/business/impact.ts` + `signal-match.ts`): `ImpactMonitor`
+      counts matches of the declared impact pattern per service per bucket and
+      raises a soft `BusinessImpact` signal at `minImpact`, upgraded to hard on a
+      severe spike. Wired into `LogAnalyzer` as a fourth lens. `compileMatch`
+      reuses the exact `impactSignal.match` shape (level + pattern).
+- [x] **Absence/baseline detection** for "checkouts not happening"
+      (`lib/sentinel/business/absence.ts`): `AbsenceMonitor` baselines a countable
+      **success** signal per service and, on a `tick()` (once per bucket, driven by
+      the runtime timer + `SentinelEngine.tick`), flags a hard `SuccessDrop` when a
+      completed bucket collapses below `baseline / dropFactor` — guarded by
+      `minBaseline`/`minBaselineBuckets` so low-traffic services never false-flag.
 - [ ] Optional **AI judgment** for ambiguous/business-semantic clusters (guarded, on
       demand) — reasons over signals that exist; never invents.
+- [x] Tests: `compileMatch`, impact thresholds/hard-upgrade/per-bucket, absence
+      warm-up/collapse/low-traffic/once-per-bucket, analyzer + engine `tick`
+      integration. 508 tests green. `BusinessImpact`/`SuccessDrop` → `latency-slo`.
 
 ### B6. Config surface — make `detection:` REAL  ⬜
 - [ ] Replace the currently-inert `detection:` block with a real, consumed config:

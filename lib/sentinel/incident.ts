@@ -60,6 +60,9 @@ const SIGNAL_TO_FAILURE: Record<string, FailureType> = {
   "Log:Panic": "bad-deploy",
   "Log:Segfault": "bad-deploy",
   "Log:StackOverflow": "bad-deploy",
+  // Business / absence signals (lib/sentinel/business).
+  BusinessImpact: "latency-slo",
+  SuccessDrop: "latency-slo",
 }
 
 export function decisionToAlert(decision: IncidentDecision, at: number = Date.now()): SentinelAlert {

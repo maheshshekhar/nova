@@ -218,6 +218,12 @@ export function start(): void {
   }
   process.on("SIGTERM", shutdown)
   process.on("SIGINT", shutdown)
+
+  // Clock-driven pass for absence/baseline detection (success-signal drops).
+  const tick = setInterval(() => {
+    void engine.tick().catch((e) => log(`tick error: ${e}`))
+  }, 60_000)
+  tick.unref?.()
 }
 
 // Run when invoked directly (tsx lib/sentinel/run.ts).
