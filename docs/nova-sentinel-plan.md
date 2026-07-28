@@ -125,8 +125,9 @@ domain:
 - [x] **Event extraction** (`extractEventSignal`): `FailedMount`, `Unhealthy` probe,
       `FailedScheduling`, `FailedCreatePodSandBox`, `BackOff` — with an injectable
       `ServiceResolver` (informer pod cache maps object → service). 6 tests.
-- [ ] k8s **informer/watch** wiring that feeds real pods/events through the extractors.
-- [ ] rollout health: progress-deadline slipping.
+- [x] k8s **informer/watch** wiring that feeds real pods/events through the extractors
+      (`lib/sentinel/run.ts` — pod + event informers, operator-grade).
+- [ ] rollout health: progress-deadline slipping. *(next)*
 
 ### B2. Correlation + candidate→confirm engine  ✅ (core)
 - [x] Per-service, in-memory signal accumulation with a rolling window
@@ -139,8 +140,13 @@ domain:
       `reason` + evidence attached to each `IncidentDecision`.
 - [x] Tests: 8 — hard-immediate, single-soft-candidate, same-kind-no-confirm,
       distinct-soft-confirm, dedup, window-expiry, resolve-reflag, multi-service.
-- [ ] **Leading indicators** ("tell before"): restarts *accelerating*, memory
-      *approaching* limit — a later refinement (soft signals already cover the base case).
+- [x] **Leading indicators** ("tell before") — `lib/sentinel/leading.ts`:
+      `RestartAccelerationMonitor` flags a container whose restart *cadence* is
+      speeding up (before CrashLoop backoff masks it); `MemoryTrendMonitor` flags a
+      container whose working set is high (≥ 85% of limit) AND rising (before an
+      OOMKill), fed by a metrics-server poll. Both SOFT (corroborate); wired into
+      `engine.onPod`/`engine.onMemory`. `parseQuantity` for memory limits. 11 tests
+      + engine integration.
 
 ### B3. Incident creation with evidence (no auto-RCA)  🚧
 - [x] `decisionToAlert()` (`lib/sentinel/incident.ts`) — pure map from a correlator

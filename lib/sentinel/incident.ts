@@ -63,6 +63,9 @@ const SIGNAL_TO_FAILURE: Record<string, FailureType> = {
   // Business / absence signals (lib/sentinel/business).
   BusinessImpact: "latency-slo",
   SuccessDrop: "latency-slo",
+  // Leading indicators (lib/sentinel/leading).
+  RestartsAccelerating: "CrashLoopBackOff",
+  MemoryPressureRising: "memory-leak",
 }
 
 export function decisionToAlert(decision: IncidentDecision, at: number = Date.now()): SentinelAlert {

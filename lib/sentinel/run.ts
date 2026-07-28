@@ -8,6 +8,7 @@ import { serviceNameFromLabels } from "./signal"
 import { parseLogLine } from "./logs/parse"
 import { buildSentinel, loadSentinelConfig } from "./config"
 import { TailScheduler, type OpenStream } from "./log-scheduler"
+import { parseQuantity } from "./quantity"
 import type { SentinelConfig } from "@/lib/config/schema"
 import type { EventLike, PodLike } from "./extract"
 
@@ -305,6 +306,32 @@ export function start(): void {
   heartbeat()
   const hb = setInterval(heartbeat, 30_000)
   hb.unref?.()
+
+  // Leading indicator: poll metrics-server for container memory usage so the
+  // trend monitor can warn before an OOMKill. Optional — silently skipped when
+  // metrics-server isn't installed.
+  const metricsClient = new k8s.Metrics(kc)
+  const pollMemory = async () => {
+    for (const ns of scopes) {
+      try {
+        const res = ns ? await metricsClient.getPodMetrics(ns) : await metricsClient.getPodMetrics()
+        for (const item of res.items ?? []) {
+          const podNs = item.metadata?.namespace ?? "default"
+          const podName = item.metadata?.name ?? ""
+          const service = engine.index.resolve(podNs, podName, "Pod") ?? podName
+          for (const c of item.containers ?? []) {
+            const used = parseQuantity(c.usage?.memory)
+            if (used != null) void engine.onMemory(podNs, service, podName, c.name ?? "", used).catch(() => {})
+          }
+        }
+      } catch {
+        // metrics-server absent/not ready — memory-trend detection is optional.
+      }
+    }
+  }
+  void pollMemory()
+  const memTimer = setInterval(() => void pollMemory(), 30_000)
+  memTimer.unref?.()
 }
 
 // Run when invoked directly (tsx lib/sentinel/run.ts).
