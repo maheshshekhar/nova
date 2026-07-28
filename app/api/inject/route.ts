@@ -22,6 +22,11 @@ function getBatchApi(): k8s.BatchV1Api {
 
 const NAMESPACE = "production"
 
+// The k6 load-generator image is pulled from Docker Hub (built + pushed from the
+// payment-app-demo repo). Override via env for a different registry/tag.
+const LOAD_GENERATOR_IMAGE = process.env.LOAD_GENERATOR_IMAGE || "maheshekhar/load-generator:latest"
+const LOAD_GENERATOR_PULL_POLICY = process.env.LOAD_GENERATOR_PULL_POLICY || "IfNotPresent"
+
 export async function POST() {
   try {
     // Delete existing job and wait for it to be fully gone
@@ -72,8 +77,8 @@ export async function POST() {
             restartPolicy: "Never",
             containers: [{
               name: "k6",
-              image: "nova/load-generator:latest",
-              imagePullPolicy: "Never",
+              image: LOAD_GENERATOR_IMAGE,
+              imagePullPolicy: LOAD_GENERATOR_PULL_POLICY,
               env: [{
                 name: "TARGET_URL",
                 value: "http://payment-service/api/checkout"
