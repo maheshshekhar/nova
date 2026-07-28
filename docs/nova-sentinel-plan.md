@@ -226,8 +226,15 @@ domain:
       the runtime timer + `SentinelEngine.tick`), flags a hard `SuccessDrop` when a
       completed bucket collapses below `baseline / dropFactor` — guarded by
       `minBaseline`/`minBaselineBuckets` so low-traffic services never false-flag.
-- [ ] Optional **AI judgment** for ambiguous/business-semantic clusters (guarded, on
-      demand) — reasons over signals that exist; never invents.
+- [x] Optional **AI judgment** for ambiguous soft-signal clusters (guarded, on
+      demand) — `lib/sentinel/judge.ts` (`SignalJudge`, precision-first
+      `parseJudgeVerdict`/`coerceVerdict` → DENY on any failure, `HttpSignalJudge`
+      posts to `/api/sentinel/judge`). The `Correlator` surfaces below-bar soft-only
+      clusters via `ingestDetailed().ambiguous` + `confirmAmbiguous()`; the engine
+      fire-and-forgets `runJudge` (non-blocking, per-service in-flight guard +
+      per-window cost cap + `minJudgeConfidence`, honours dryRun/startup-grace/storm
+      cap). Opt-in via `sentinel.aiJudge` (default off); `nova_judged` annotation on
+      the alert. Reasons ONLY over signals that exist — never invents.
 - [x] Tests: `compileMatch`, impact thresholds/hard-upgrade/per-bucket, absence
       warm-up/collapse/low-traffic/once-per-bucket, analyzer + engine `tick`
       integration. 508 tests green. `BusinessImpact`/`SuccessDrop` → `latency-slo`.

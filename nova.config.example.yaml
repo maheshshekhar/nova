@@ -145,6 +145,15 @@ sentinel:
     minBaseline: 10            # ignore low-traffic services below this rate
     dropFactor: 5              # current < baseline/dropFactor ⇒ a drop
     label: checkouts
+  # On-demand AI judgment for AMBIGUOUS soft-signal clusters — a service with SOME
+  # soft corroboration but below `softConfirmKinds`. The judge reasons ONLY over the
+  # signals that exist (never invents) and opens the incident only if it confirms.
+  # Precision-first: no AI key / any error ⇒ hold (never opens). Needs an AI key.
+  aiJudge:
+    enabled: false
+    maxPerMin: 10              # cost/storm cap on AI judge calls per minute (0 = unlimited)
+    minConfidence: 0.6         # judge must be at least this confident to open
+    minSoftKinds: 1            # min distinct soft kinds for a cluster to be worth judging
 
 # ── Context assembly ─────────────────────────────────────────────────────────
 context:

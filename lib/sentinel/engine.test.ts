@@ -224,3 +224,81 @@ describe("SentinelEngine leading indicators", () => {
   })
 })
 
+describe("SentinelEngine — on-demand AI judgment of ambiguous soft clusters", () => {
+  // A single probe-failure event is ONE distinct soft kind — below the default
+  // softConfirmKinds (2), so it never auto-opens but IS surfaced as ambiguous.
+  function probeEvent(): any {
+    return { reason: "Unhealthy", message: "liveness probe failed", involvedObject: { kind: "Pod", name: "checkout-x", namespace: "prod" } }
+  }
+  function stubJudge(verdict: { confirm: boolean; confidence: number; reason: string }) {
+    return { judge: vi.fn(async () => verdict) }
+  }
+
+  it("does nothing to ambiguous clusters when no judge is configured (today's behaviour)", async () => {
+    const sink = collectingSink()
+    const engine = new SentinelEngine({ sink })
+    engine.index.upsert({ metadata: { name: "checkout-x", namespace: "prod", labels: { app: "checkout" } } })
+    await engine.onEvent(probeEvent())
+    await engine.whenIdle()
+    expect(sink.posted).toHaveLength(0)
+  })
+
+  it("opens a judged incident when the judge confirms with enough confidence", async () => {
+    const sink = collectingSink()
+    const judge = stubJudge({ confirm: true, confidence: 0.8, reason: "restarts + probe = crash" })
+    const engine = new SentinelEngine({ sink, judge, now: () => 0 })
+    engine.index.upsert({ metadata: { name: "checkout-x", namespace: "prod", labels: { app: "checkout" } } })
+    await engine.onEvent(probeEvent())
+    await engine.whenIdle()
+    expect(judge.judge).toHaveBeenCalledTimes(1)
+    expect(sink.posted).toHaveLength(1)
+    expect(sink.posted[0].labels).toMatchObject({ service: "checkout", source: "nova-sentinel" })
+    expect(sink.posted[0].annotations.nova_judged).toBe("true")
+    expect(sink.posted[0].annotations.nova_confidence).toBe("0.80")
+  })
+
+  it("holds (no incident) when the judge declines", async () => {
+    const sink = collectingSink()
+    const judge = stubJudge({ confirm: false, confidence: 0, reason: "transient blip" })
+    const engine = new SentinelEngine({ sink, judge })
+    engine.index.upsert({ metadata: { name: "checkout-x", namespace: "prod", labels: { app: "checkout" } } })
+    await engine.onEvent(probeEvent())
+    await engine.whenIdle()
+    expect(judge.judge).toHaveBeenCalledTimes(1)
+    expect(sink.posted).toHaveLength(0)
+  })
+
+  it("holds when the judge confirms but below the minimum confidence", async () => {
+    const sink = collectingSink()
+    const judge = stubJudge({ confirm: true, confidence: 0.4, reason: "maybe" })
+    const engine = new SentinelEngine({ sink, judge, minJudgeConfidence: 0.6 })
+    engine.index.upsert({ metadata: { name: "checkout-x", namespace: "prod", labels: { app: "checkout" } } })
+    await engine.onEvent(probeEvent())
+    await engine.whenIdle()
+    expect(sink.posted).toHaveLength(0)
+  })
+
+  it("never judges a hard signal (it auto-opens; the judge is not consulted)", async () => {
+    const sink = collectingSink()
+    const judge = stubJudge({ confirm: true, confidence: 0.9, reason: "x" })
+    const engine = new SentinelEngine({ sink, judge })
+    await engine.onPod(crashingPod())
+    await engine.whenIdle()
+    expect(judge.judge).not.toHaveBeenCalled()
+    expect(sink.posted).toHaveLength(1) // the hard CrashLoop incident, un-judged
+    expect(sink.posted[0].annotations.nova_judged).toBeUndefined()
+  })
+
+  it("caps judge calls per window (cost/storm guard)", async () => {
+    const sink = collectingSink()
+    const judge = stubJudge({ confirm: false, confidence: 0, reason: "held" })
+    const engine = new SentinelEngine({ sink, judge, maxJudgementsPerWindow: 1, rateWindowMs: 60_000, now: () => 0 })
+    engine.index.upsert({ metadata: { name: "a-x", namespace: "prod", labels: { app: "a" } } })
+    engine.index.upsert({ metadata: { name: "b-x", namespace: "prod", labels: { app: "b" } } })
+    await engine.onEvent({ reason: "Unhealthy", message: "liveness probe failed", involvedObject: { kind: "Pod", name: "a-x", namespace: "prod" } })
+    await engine.onEvent({ reason: "Unhealthy", message: "liveness probe failed", involvedObject: { kind: "Pod", name: "b-x", namespace: "prod" } })
+    await engine.whenIdle()
+    expect(judge.judge).toHaveBeenCalledTimes(1) // second service exceeded the cap
+  })
+})
+

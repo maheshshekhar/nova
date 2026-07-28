@@ -1,4 +1,4 @@
-import { Correlator } from "./correlate"
+import { Correlator, type AmbiguousCluster } from "./correlate"
 import { extractPodSignals, podMemoryLimits, extractDeploymentSignals, type EventLike, type PodLike, type DeploymentLike } from "./extract"
 import { extractEventSignal } from "./extract"
 import { decisionToAlert } from "./incident"
@@ -8,6 +8,7 @@ import type { IncidentSink } from "./sink"
 import { PodServiceIndex } from "./service-index"
 import { LogAnalyzer, type LogLine } from "./logs/analyzer"
 import { RestartAccelerationMonitor, MemoryTrendMonitor } from "./leading"
+import { toJudgeInput, type SignalJudge } from "./judge"
 
 // The Sentinel engine — the pure decision core the informer worker drives.
 //
@@ -32,6 +33,14 @@ export interface SentinelEngineOptions {
   /** Suppress incident emission for this long after start (still learns baselines
    * and de-dups) so the initial informer sync of pre-existing state can't storm. */
   startupGraceMs?: number
+  /** Optional on-demand AI judge for ambiguous soft-signal clusters. When set,
+   * soft-only clusters below the auto-confirm bar are reasoned over (never
+   * invented) and opened only if the judge confirms. Absent ⇒ today's behaviour. */
+  judge?: SignalJudge
+  /** Storm/cost cap: max AI judgments per `rateWindowMs` (0 = unlimited). */
+  maxJudgementsPerWindow?: number
+  /** Minimum judge confidence required to open an incident (default 0.6). */
+  minJudgeConfidence?: number
   logger?: (message: string) => void
   now?: () => number
 }
@@ -58,6 +67,12 @@ export class SentinelEngine {
   private readonly restartAccel: RestartAccelerationMonitor
   private readonly memTrend: MemoryTrendMonitor
   private readonly memLimits = new Map<string, number>() // ns/pod/container → limit bytes
+  private readonly judge?: SignalJudge
+  private readonly maxJudgements: number
+  private readonly minJudgeConfidence: number
+  private readonly judgeCalls: number[] = [] // recent judge-call timestamps (cost/storm cap)
+  private readonly pendingJudge = new Set<string>() // services with an in-flight judgment
+  private readonly inFlight = new Set<Promise<void>>() // outstanding judgment promises
   private readonly log: (message: string) => void
   private readonly now: () => number
 
@@ -73,6 +88,9 @@ export class SentinelEngine {
     this.startupGraceMs = opts.startupGraceMs ?? 0
     this.restartAccel = new RestartAccelerationMonitor({ now: opts.now })
     this.memTrend = new MemoryTrendMonitor({ now: opts.now })
+    this.judge = opts.judge
+    this.maxJudgements = opts.maxJudgementsPerWindow ?? 0
+    this.minJudgeConfidence = opts.minJudgeConfidence ?? 0.6
     this.log = opts.logger ?? ((m) => console.log(m))
     this.now = opts.now ?? Date.now
     this.startedAt = this.now()
@@ -172,15 +190,21 @@ export class SentinelEngine {
     // Storm/precision guard 1 — drop muted services entirely (before correlation).
     const kept = this.mute.size ? signals.filter((s) => !this.mute.has(s.service)) : signals
     if (kept.length === 0) return
-    const decisions = this.correlator.ingest(kept, this.now())
-    if (decisions.length === 0) return
-
     const now = this.now()
-    // Storm/precision guard 2 — startup grace: suppress during the initial sync.
+    const { decisions, ambiguous } = this.correlator.ingestDetailed(kept, now)
+
+    // Storm/precision guard 2 — startup grace: suppress during the initial sync
+    // (covers both auto-confirmed decisions AND on-demand judging).
     if (this.startupGraceMs > 0 && now - this.startedAt < this.startupGraceMs) {
       for (const d of decisions) this.log(`[startup-grace] suppressed incident: ${d.reason}`)
       return
     }
+
+    // On-demand AI judgment for ambiguous soft clusters (non-blocking; the main
+    // signal flow never waits on a network call).
+    if (this.judge && ambiguous.length) this.dispatchJudgements(ambiguous, now)
+
+    if (decisions.length === 0) return
 
     // Storm/precision guard 3 — global rate cap (backpressure).
     const admitted = this.admit(decisions.length, now)
@@ -199,6 +223,69 @@ export class SentinelEngine {
     await this.sink.post(toEmit.map((d) => decisionToAlert(d, now)))
   }
 
+  /** Fire off AI judgments for ambiguous clusters WITHOUT blocking the caller.
+   * Bounded by an in-flight-per-service guard and a per-window cost cap. */
+  private dispatchJudgements(clusters: AmbiguousCluster[], now: number): void {
+    for (const cluster of clusters) {
+      const key = `${cluster.namespace}/${cluster.service}`
+      if (this.pendingJudge.has(key)) continue // one in-flight judgment per service
+      if (!this.admitJudge(now)) break // cost/storm cap reached this window
+      this.pendingJudge.add(key)
+      const p = this.runJudge(cluster).finally(() => {
+        this.pendingJudge.delete(key)
+        this.inFlight.delete(p)
+      })
+      this.inFlight.add(p)
+    }
+  }
+
+  /** Await any in-flight AI judgments — for graceful shutdown and deterministic
+   * tests (the judge path is otherwise fire-and-forget). */
+  async whenIdle(): Promise<void> {
+    while (this.inFlight.size) await Promise.all([...this.inFlight])
+  }
+
+  /** Ask the judge about one ambiguous cluster and, if it confirms with enough
+   * confidence, open the incident through the same emission guards. Precision-
+   * first: any hold/low-confidence/error simply drops (no incident). */
+  private async runJudge(cluster: AmbiguousCluster): Promise<void> {
+    const key = `${cluster.namespace}/${cluster.service}`
+    let verdict
+    try {
+      verdict = await this.judge!.judge(toJudgeInput(cluster))
+    } catch (e) {
+      this.log(`[ai-judge] error judging ${key}: ${e}`)
+      return
+    }
+    if (!verdict.confirm) {
+      this.log(`[ai-judge] held ${key}: ${verdict.reason}`)
+      return
+    }
+    if (verdict.confidence < this.minJudgeConfidence) {
+      this.log(`[ai-judge] held ${key}: confidence ${verdict.confidence.toFixed(2)} < ${this.minJudgeConfidence}`)
+      return
+    }
+    const at = this.now()
+    const decision = this.correlator.confirmAmbiguous(
+      cluster.namespace,
+      cluster.service,
+      verdict.confidence,
+      verdict.reason,
+      at
+    )
+    if (!decision) return // opened/recovered meanwhile, or no soft signals remain
+    if (this.dryRun) {
+      this.log(`[dry-run] ai-judge would open incident: ${decision.reason} (confidence ${Math.round(decision.confidence * 100)}%)`)
+      return
+    }
+    if (this.admit(1, at) < 1) {
+      this.log(`[storm-control] ai-judge incident suppressed (rate cap)`)
+      return
+    }
+    await this.sink.post([decisionToAlert(decision, at)])
+    this.log(`[ai-judge] opened incident: ${decision.reason} (confidence ${Math.round(decision.confidence * 100)}%)`)
+  }
+
   /** Token accounting for the storm cap. Returns how many of `n` may be emitted
    * now, recording those that are. 0 maxIncidents ⇒ unlimited. */
   private admit(n: number, now: number): number {
@@ -209,5 +296,15 @@ export class SentinelEngine {
     const grant = Math.min(room, n)
     for (let i = 0; i < grant; i++) this.emitted.push(now)
     return grant
+  }
+
+  /** Cost/storm cap for AI judge calls. Returns whether one more call is allowed
+   * now, recording it if so. 0 maxJudgements ⇒ unlimited. */
+  private admitJudge(now: number): boolean {
+    const cutoff = now - this.rateWindowMs
+    while (this.judgeCalls.length && this.judgeCalls[0] < cutoff) this.judgeCalls.shift()
+    if (this.maxJudgements > 0 && this.judgeCalls.length >= this.maxJudgements) return false
+    this.judgeCalls.push(now)
+    return true
   }
 }

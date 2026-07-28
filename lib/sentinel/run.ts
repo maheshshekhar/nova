@@ -4,6 +4,7 @@ import * as http from "node:http"
 import * as https from "node:https"
 import { SentinelEngine } from "./engine"
 import { HttpAlertSink } from "./sink"
+import { HttpSignalJudge } from "./judge"
 import { serviceNameFromLabels } from "./signal"
 import { parseLogLine } from "./logs/parse"
 import { buildSentinel, loadSentinelConfig } from "./config"
@@ -235,6 +236,7 @@ export function start(): void {
 
   const build = buildSentinel(cfg)
   const sink = new HttpAlertSink(novaUrl)
+  const judge = cfg.aiJudge.enabled ? new HttpSignalJudge(novaUrl) : undefined
   const engine = new SentinelEngine({
     sink,
     correlator: build.correlator,
@@ -244,13 +246,16 @@ export function start(): void {
     maxIncidentsPerWindow: cfg.maxIncidentsPerMin,
     rateWindowMs: 60_000,
     startupGraceMs: cfg.startupGraceSec * 1000,
+    judge,
+    maxJudgementsPerWindow: cfg.aiJudge.maxPerMin,
+    minJudgeConfidence: cfg.aiJudge.minConfidence,
     logger: log,
   })
   const tailer = build.logsEnabled ? makeLogTailer(kc, engine, cfg.logs.maxConcurrentTails) : null
 
   const scopes = cfg.namespaces.length > 0 ? cfg.namespaces : [null]
   log(
-    `starting — nova=${novaUrl} scope=${cfg.namespaces.length ? cfg.namespaces.join(",") : "all namespaces"} dryRun=${cfg.dryRun} logs=${build.logsEnabled} impact=${cfg.impact.enabled} absence=${cfg.absence.enabled} sensitivity=${cfg.sensitivity} mute=[${cfg.mute.join(",")}] maxPerMin=${cfg.maxIncidentsPerMin}`
+    `starting — nova=${novaUrl} scope=${cfg.namespaces.length ? cfg.namespaces.join(",") : "all namespaces"} dryRun=${cfg.dryRun} logs=${build.logsEnabled} impact=${cfg.impact.enabled} absence=${cfg.absence.enabled} aiJudge=${cfg.aiJudge.enabled} sensitivity=${cfg.sensitivity} mute=[${cfg.mute.join(",")}] maxPerMin=${cfg.maxIncidentsPerMin}`
   )
 
   const onPod = (obj: k8s.V1Pod) => {
