@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { extractPodSignals, extractEventSignal, type PodLike, type EventLike } from "@/lib/sentinel/extract"
+import { extractPodSignals, extractEventSignal, extractDeploymentSignals, type PodLike, type EventLike } from "@/lib/sentinel/extract"
 
 // Build a pod fixture with one container in a given state.
 function pod(over: {
@@ -166,5 +166,28 @@ describe("extractEventSignal", () => {
 
   it("falls back to the object name when no resolver is given", () => {
     expect(extractEventSignal(evt({ reason: "FailedMount" }))!.service).toBe("checkout-abc123")
+  })
+})
+
+describe("extractDeploymentSignals — rollout health", () => {
+  it("flags a rollout past its progress deadline as a hard BadRollout", () => {
+    const [s] = extractDeploymentSignals({
+      metadata: { name: "checkout", namespace: "prod", labels: { app: "checkout" } },
+      status: { conditions: [{ type: "Progressing", status: "False", reason: "ProgressDeadlineExceeded", message: "ReplicaSet has timed out" }] },
+    })
+    expect(s).toMatchObject({ kind: "BadRollout", severity: "critical", hard: true, service: "checkout", namespace: "prod" })
+    expect(s.source).toEqual({ kind: "Deployment", name: "checkout" })
+  })
+
+  it("does NOT flag a healthy / normally-progressing rollout", () => {
+    expect(extractDeploymentSignals({
+      metadata: { name: "checkout", namespace: "prod" },
+      status: { conditions: [{ type: "Progressing", status: "True", reason: "NewReplicaSetAvailable" }, { type: "Available", status: "True" }] },
+    })).toHaveLength(0)
+    // Mid-rollout (Progressing True with ReplicaSetUpdated) is not a stall.
+    expect(extractDeploymentSignals({
+      metadata: { name: "checkout", namespace: "prod" },
+      status: { conditions: [{ type: "Progressing", status: "True", reason: "ReplicaSetUpdated" }] },
+    })).toHaveLength(0)
   })
 })

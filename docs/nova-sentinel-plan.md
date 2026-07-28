@@ -127,7 +127,10 @@ domain:
       `ServiceResolver` (informer pod cache maps object → service). 6 tests.
 - [x] k8s **informer/watch** wiring that feeds real pods/events through the extractors
       (`lib/sentinel/run.ts` — pod + event informers, operator-grade).
-- [ ] rollout health: progress-deadline slipping. *(next)*
+- [x] rollout health: progress-deadline slipping — `extractDeploymentSignals`
+      flags a Deployment whose `Progressing` condition is `ProgressDeadlineExceeded`
+      as a hard `BadRollout` (→ `bad-deploy`); a deployments informer feeds it.
+      Ignores normal mid-rollout unavailability (low false-positive).
 
 ### B2. Correlation + candidate→confirm engine  ✅ (core)
 - [x] Per-service, in-memory signal accumulation with a rolling window
