@@ -45,8 +45,8 @@ dashboard:
       - { id: db-pool, label: "DB pool", query: "max(db_pool_in_use_percent)", unit: "%", thresholds: { warn: 70, critical: 90 } }
 ```
 
-!!! tip "Hybrid with the collector"
-    Prometheus has no pod-count concept, and can't scrape a CrashLooping pod. When a metrics
-    collector is also available, Nova **merges** its pod counts and **unions** in services
+!!! tip "Hybrid with the Kubernetes reader"
+    Prometheus has no pod-count concept, and can't scrape a CrashLooping pod. Nova's
+    in-process Kubernetes reader **merges** its pod counts and **unions** in services
     Prometheus can't see — so the most important service never disappears during its own
     incident.

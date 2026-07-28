@@ -29,7 +29,7 @@ export default function DeploymentsPage() {
 
       {deployments.length === 0 ? (
         <div className="card-glass rounded-lg px-5 py-10 text-center text-sm font-mono text-muted-foreground">
-          No deployments reported by the metrics collector yet.
+          No deployments reported yet.
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">

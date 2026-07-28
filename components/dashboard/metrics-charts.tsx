@@ -73,7 +73,7 @@ function ChartEmptyState({ title, message }: { title: string; message?: string }
       <div className="h-40 flex flex-col items-center justify-center gap-2 text-center">
         <Activity className="w-6 h-6 text-muted-foreground/50" />
         <p className="text-xs font-mono text-muted-foreground">
-          {message ?? "Metrics collector unreachable"}
+          {message ?? "Metrics unavailable"}
         </p>
         <p className="text-[10px] font-mono text-muted-foreground/70">
           No data to display — waiting for a live source.
@@ -88,7 +88,7 @@ export function ErrorRateChart() {
   const { config } = useDashboardConfig()
   const [windowMins, setWindowMins] = useState(3)
 
-  // Source-driven only: with no reachable collector there is no data to show.
+  // Source-driven only: with no reachable metrics source there is no data to show.
   if (!realMetrics.available) return <ChartEmptyState title="Error Rate" />
 
   const descriptor = getDescriptor("errorRate")
@@ -186,7 +186,7 @@ export function ErrorRateChart() {
 
 // Response-latency (p95) chart — driven ONLY by a real latency source (Prometheus).
 // It maintains a rolling window of the fleet-mean p95 across application services.
-// When no service reports latency (e.g. the CPU/mem-only collector), it shows an
+// When no service reports latency (e.g. the CPU/mem-only k8s reader), it shows an
 // empty state rather than fabricating a line.
 export function LatencyChart() {
   const { realMetrics } = useLiveMetrics()

@@ -345,7 +345,6 @@ Set these in `.env.local` (local dev) or via the deployment env (in‑cluster). 
 | `LOKI_URL` | `http://loki:3100` | Loki endpoint (also settable via `logs.url` in config). |
 | `ELASTICSEARCH_URL` / `ELASTICSEARCH_INDEX` | `http://elasticsearch:9200` / `logs-*` | ES/OpenSearch backend (when `logs.provider` is elasticsearch/opensearch). |
 | `DATA_DIR` | `./data` | File-store directory (mount a volume here in production). |
-| `METRICS_COLLECTOR_URL` | `http://metrics-collector:3001` | Where `/api/metrics` proxies (demo). |
 
 Secrets are referenced from config via `${ENV_VAR}` and are **server-side only** — never sent
 to the browser and never shown in `/settings`. If **neither** AI key is set, AI actions
@@ -397,7 +396,7 @@ npm test               # run the test suite
 | `app/incidents/` | Incident list + `/incidents/[id]` detail page |
 | `app/logs/` | Live log viewer |
 | `app/api/analyze/` | `POST` — streams the RCA (OpenRouter / Anthropic) |
-| `app/api/metrics/` | `GET` — proxies the metrics-collector |
+| `app/api/metrics/` | `GET` — pod/workload health from the Kubernetes API (or Prometheus) |
 | `app/api/inject/` | `POST` / `DELETE` — create / stop the k6 load Job |
 | `components/dashboard/` | Dashboard UI — charts, tables, incident trigger, AI panel |
 | `components/ui/` | shadcn/ui primitives _(left untouched by convention)_ |

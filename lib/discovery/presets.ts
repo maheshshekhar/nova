@@ -15,7 +15,7 @@
 
 // The RED signal keys a preset can generate. These are the subset of
 // NUMERIC_METRIC_KEYS (lib/metrics/source.ts) that a request-metrics exporter
-// provides; CPU/memory/pod-health come from the k8s collector, not from presets.
+// provides; CPU/memory/pod-health come from the Kubernetes API, not from presets.
 export type RedSignalKey = "errorRate" | "latencyP50" | "latencyP95" | "latencyP99" | "rps"
 
 export interface ExporterPreset {

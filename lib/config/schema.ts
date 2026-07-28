@@ -121,20 +121,14 @@ export type PersistenceConfig = z.infer<typeof PersistenceConfigSchema>
 // ── Metrics ──────────────────────────────────────────────────────────────────
 export const MetricsConfigSchema = z
   .object({
-    // `kubernetes` (default): Nova reads pod/workload health from the Kubernetes
-    // API. Today via the bundled collector at `url`/`collectorUrl`; Nova's own
-    // informer reader replaces the collector in a later step (see
-    // docs/nova-sentinel-plan.md, B0/B1). `prometheus`: OPTIONAL — add app RED
-    // metrics (error rate / latency / RPS) from your Prometheus. `http` is a
-    // legacy alias for `kubernetes`. `none` disables metrics entirely.
+    // `kubernetes` (default): Nova reads pod/workload health directly from the
+    // Kubernetes API + metrics-server, in-process (no external collector). Needs
+    // read-only RBAC on pods/namespaces/deployments/metrics.k8s.io. `prometheus`:
+    // OPTIONAL — add app RED metrics (error rate / latency / RPS) from your
+    // Prometheus, unioned with the native k8s inventory. `http` is a legacy alias
+    // for `kubernetes`. `none` disables metrics entirely.
     provider: z.enum(["prometheus", "kubernetes", "http", "none"]).default("kubernetes"),
     url: z.string().optional(),
-    // The Kubernetes metrics-collector endpoint. For provider `http` the collector
-    // IS the metrics source (so `url` points at it); for provider `prometheus` the
-    // collector enriches Prometheus with pod inventory (pod counts, crash state) —
-    // set `collectorUrl` for that. Resolved from CONFIG (never read from env at
-    // runtime) so nova-config.yaml is the single source of truth, like logs.
-    collectorUrl: z.string().optional(),
     // Prometheus adapter (provider: prometheus). Nova is only a PromQL CLIENT —
     // it queries an existing Prometheus, it never scrapes. The queries below are
     // config-driven so the adapter stays domain-agnostic: each entry maps a

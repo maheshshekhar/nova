@@ -28,7 +28,7 @@ commented example.
 | Field | Default | Notes |
 |---|---|---|
 | `provider` | `http` | `prometheus \| http \| none` |
-| `url` | — | Prometheus / collector URL |
+| `url` | — | Prometheus URL |
 | `serviceLabel` | `service` | PromQL label identifying the service |
 | `queries` | `{}` | metric key → PromQL (see the [Prometheus guide](../guides/prometheus.md)) |
 | `authTokenEnv` | — | ENV VAR name for a bearer token |

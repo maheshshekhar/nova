@@ -35,11 +35,9 @@ CLUSTER_NAME="nova-platform"
 MON_NAMESPACE="nova-monitoring"
 K8S="examples/kind-demo/k8s"
 
-# The bundled metrics-collector (k8s pod/deployment reader) + metrics-server are
-# deployed by default so ANY workload shows CPU/mem/pod-health with zero config.
-# Skip them with DEPLOY_COLLECTOR=false when you already run Prometheus (+ kube-
-# state-metrics) and point Nova at it (metrics.provider: prometheus) instead.
-DEPLOY_COLLECTOR="${DEPLOY_COLLECTOR:-true}"
+# metrics-server is installed so Nova's in-process metrics reader can show
+# CPU/mem/pod-health for ANY workload with zero config. (For clusters that
+# already run Prometheus, point Nova at it with metrics.provider: prometheus.)
 
 # ── Prerequisites ─────────────────────────────────────────────────────────────
 command -v kubectl >/dev/null 2>&1 || error "kubectl not found. Run: brew install kubectl"
@@ -84,59 +82,25 @@ else
   success "nova/dashboard:latest loaded"
 fi
 
-# ── metrics-collector (cluster-wide pod/deployment reader) ────────────────────
-# Nova ships no metrics backend of its own, but the dashboard still needs SOME
-# source so it shows service health/CPU/mem for WHATEVER workload is running
-# (OTel demo, Boutique, Sock Shop, …). The collector reads pods, namespaces and
-# deployments cluster-wide, so it works for every demo out of the box. Demos
-# with their own richer stack (e.g. Custom Payment System) can still re-point
-# Nova at their backends via deploy-reference-apps.sh.
-#
-# Optional: set DEPLOY_COLLECTOR=false to skip the collector + metrics-server
-# entirely (for clusters that already expose Prometheus + kube-state-metrics).
-if [ "$DEPLOY_COLLECTOR" = "true" ]; then
-if docker image inspect "nova/metrics-collector:latest" >/dev/null 2>&1; then
-  warn "nova/metrics-collector:latest already built — skipping (docker rmi nova/metrics-collector:latest to rebuild)"
-else
-  log "Building nova/metrics-collector:latest..."
-  docker build -t "nova/metrics-collector:latest" \
-    -f "examples/kind-demo/metrics-collector/Dockerfile" \
-    "examples/kind-demo/metrics-collector" || error "Build failed: nova/metrics-collector:latest"
-  success "nova/metrics-collector:latest built"
-fi
-
-if docker exec "${CLUSTER_NAME}-control-plane" crictl images 2>/dev/null | grep -q "nova/metrics-collector"; then
-  warn "nova/metrics-collector:latest already in cluster — skipping load"
-else
-  log "Loading nova/metrics-collector:latest into KinD..."
-  kind load docker-image "nova/metrics-collector:latest" --name "$CLUSTER_NAME" || error "kind load failed"
-  success "nova/metrics-collector:latest loaded"
-fi
-
-# metrics-server (cluster singleton) — provides pod CPU/memory to the collector.
-# Idempotent: re-applying is a no-op if it's already installed.
+# ── metrics-server (pod CPU/memory for Nova's native metrics reader) ──────────
+# Nova's dashboard reads pod/deployment/namespace health directly from the
+# Kubernetes API IN-PROCESS (no external metrics-collector sidecar); pod CPU/
+# memory come from metrics-server. Idempotent: re-applying is a no-op if it's
+# already installed. (For clusters that already expose Prometheus, point Nova at
+# it with metrics.provider: prometheus.)
 log "Installing metrics-server (pod CPU/memory source)..."
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 kubectl patch deployment metrics-server -n kube-system --type=json \
   -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' \
   2>/dev/null || true
-else
-  warn "DEPLOY_COLLECTOR=false — skipping the bundled metrics-collector + metrics-server."
-  warn "Point Nova at your own Prometheus (metrics.provider: prometheus) instead."
-fi
 
-kubectl apply -f "$K8S/dashboard-rbac.yaml"   # dashboard-sa (nova-monitoring)
-[ "$DEPLOY_COLLECTOR" = "true" ] && kubectl apply -f "$K8S/metrics-collector.yaml" # cluster-wide metrics backend for Nova
+kubectl apply -f "$K8S/dashboard-rbac.yaml"   # dashboard-sa + read-only metrics RBAC
 kubectl apply -f "$K8S/nova-config.yaml"       # all-namespace log scope + backend URLs
 kubectl apply -f "$K8S/dashboard.yaml"
 
 log "Waiting for the dashboard to be ready..."
 kubectl wait --for=condition=available deployment/dashboard -n "$MON_NAMESPACE" --timeout=180s \
   || warn "dashboard not ready yet"
-if [ "$DEPLOY_COLLECTOR" = "true" ]; then
-  kubectl rollout status deployment/metrics-collector -n "$MON_NAMESPACE" --timeout=120s \
-    || warn "metrics-collector not ready yet"
-fi
 
 # ── Serve: background port-forward on :3000 (+ optional trusted https://nova) ──
 log "Starting background port-forward (dashboard:3000)..."
