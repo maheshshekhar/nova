@@ -3,6 +3,7 @@
 import { AlertTriangle, ArrowLeft, ArrowUpRight, CheckCircle2, Clock, Filter, Search, Users, Zap } from "lucide-react"
 import { useEffect, useState } from "react"
 import Link from "next/link"
+import { NovaBadge } from "@/components/dashboard/nova-badge"
 
 // Shape returned by GET /api/incidents (subset the list page needs).
 type ApiIncident = {
@@ -15,6 +16,7 @@ type ApiIncident = {
   resolvedAt: number | null
   durationMin: number | null
   affectedUsers?: number
+  detectedBy?: string
 }
 
 function agoLabel(ms: number): string {
@@ -181,6 +183,7 @@ export default function IncidentsPage() {
                       {inc.severity.toUpperCase()}
                     </span>
                     <span className="text-[10px] font-mono text-muted-foreground">{inc.id}</span>
+                    {inc.detectedBy === "nova-sentinel" && <NovaBadge />}
                   </div>
                   <p className="text-sm font-medium text-foreground mt-1 truncate group-hover:text-[var(--neon-cyan)] transition-colors">
                     {inc.title}
@@ -242,6 +245,7 @@ export default function IncidentsPage() {
                   <span className="text-[10px] font-mono text-[var(--neon-green)] border border-[var(--neon-green)]/30 bg-[var(--neon-green)]/10 px-1.5 py-0.5 rounded">
                     RESOLVED
                   </span>
+                  {inc.detectedBy === "nova-sentinel" && <NovaBadge />}
                   <span className="text-[10px] font-mono text-muted-foreground flex items-center gap-1">
                     <Zap className="w-2.5 h-2.5" /> {inc.service}
                   </span>

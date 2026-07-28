@@ -86,6 +86,9 @@ export interface IncidentRecord {
   rca: IncidentRca | null
   // Where the record came from: pre-seeded history vs a live run.
   origin: "seed" | "live"
+  // Detection provenance — the alert `source` label, e.g. "nova-sentinel" when
+  // Nova Sentinel opened the incident itself. Undefined for external/inject paths.
+  detectedBy?: string
 }
 
 // Human-friendly labels for each failure type (used in UI badges / chat context).

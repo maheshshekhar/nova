@@ -113,6 +113,31 @@ describe("createIncident", () => {
     expect(roundTrip?.title).toBe("new outage")
   })
 
+  it("persists the detectedBy provenance (e.g. nova-sentinel)", async () => {
+    const created = await store.createIncident({
+      title: "sentinel outage",
+      severity: "high",
+      service: "sentinel-svc",
+      failureType: "CrashLoopBackOff",
+      description: "opened by Nova Sentinel",
+      detectedBy: "nova-sentinel",
+    })
+    expect(created.detectedBy).toBe("nova-sentinel")
+    const roundTrip = await store.getIncident(created.id)
+    expect(roundTrip?.detectedBy).toBe("nova-sentinel")
+  })
+
+  it("leaves detectedBy undefined for incidents without a source", async () => {
+    const created = await store.createIncident({
+      title: "external outage",
+      severity: "low",
+      service: "ext-svc",
+      failureType: "network",
+      description: "from an external path",
+    })
+    expect(created.detectedBy).toBeUndefined()
+  })
+
   it("is idempotent for a duplicate id (returns the existing record)", async () => {
     const a = await store.createIncident({
       id: "INC-7777",

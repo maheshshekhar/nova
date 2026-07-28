@@ -68,6 +68,7 @@ export async function POST(req: NextRequest) {
       failureType,
       startedAt,
       description,
+      detectedBy: labels.source,
     })
     results.push({ service, id: incident.id, created: true })
   }

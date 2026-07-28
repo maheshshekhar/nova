@@ -5,6 +5,7 @@ import Link from "next/link"
 import { ArrowLeft, AlertTriangle, Clock, Users, Zap, Terminal, ExternalLink, Brain, ShieldCheck, Sparkles, CheckCircle2, Loader2, FileText, BookOpen, Play } from "lucide-react"
 import { useRealLogs } from "@/hooks/use-real-metrics"
 import { RcaGeneratorButton } from "@/components/dashboard/rca-document-modal"
+import { NovaBadge } from "@/components/dashboard/nova-badge"
 import { matchRunbook, type Runbook } from "@/lib/runbooks"
 import { formatLocalTime, formatLocalClock, parseRawLogLine } from "@/lib/local-time"
 import type { IncidentRecord } from "@/lib/incident-types"
@@ -252,6 +253,7 @@ export default function IncidentDetailPage({ params }: { params: Promise<{ id: s
               <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot} ${resolved ? "" : "animate-pulse"}`} />
               {statusLabel[effectiveStatus] ?? effectiveStatus.toUpperCase()}
             </span>
+            {record?.detectedBy === "nova-sentinel" && <NovaBadge />}
           </div>
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-mono font-bold text-foreground">{incident.title}</h1>
