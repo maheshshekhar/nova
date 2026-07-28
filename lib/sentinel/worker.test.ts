@@ -34,6 +34,17 @@ describe("decisionToAlert", () => {
     expect(a.startsAt).toBe(new Date(0).toISOString())
   })
 
+  it("carries structured evidence + confidence in machine-readable annotations", () => {
+    const a = decisionToAlert(
+      decision({ confidence: 0.9, signals: [sig({ kind: "CrashLoopBackOff", hard: true }), sig({ kind: "HighRestarts", hard: false })] })
+    )
+    expect(a.annotations.nova_confidence).toBe("0.90")
+    const parsed = JSON.parse(a.annotations.nova_signals)
+    expect(parsed).toHaveLength(2)
+    expect(parsed[0]).toMatchObject({ kind: "CrashLoopBackOff", hard: true })
+    expect(parsed[1]).toMatchObject({ kind: "HighRestarts", hard: false })
+  })
+
   it("maps OOMKilled/CreateContainerConfigError/FailedMount to their failure types", () => {
     expect(decisionToAlert(decision({ signals: [sig({ kind: "OOMKilled", hard: true })] })).labels.failure_type).toBe("OOMKilled")
     expect(decisionToAlert(decision({ signals: [sig({ kind: "CreateContainerConfigError", hard: true })] })).labels.failure_type).toBe("config-missing")

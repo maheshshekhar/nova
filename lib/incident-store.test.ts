@@ -127,6 +127,23 @@ describe("createIncident", () => {
     expect(roundTrip?.detectedBy).toBe("nova-sentinel")
   })
 
+  it("persists structured Sentinel evidence + confidence", async () => {
+    const created = await store.createIncident({
+      title: "evidence outage",
+      severity: "critical",
+      service: "ev-svc",
+      failureType: "OOMKilled",
+      description: "with evidence",
+      detectedBy: "nova-sentinel",
+      confidence: 0.9,
+      evidence: [{ kind: "OOMKilled", message: "Container app was OOMKilled", severity: "critical", hard: true }],
+    })
+    const roundTrip = await store.getIncident(created.id)
+    expect(roundTrip?.confidence).toBe(0.9)
+    expect(roundTrip?.evidence).toHaveLength(1)
+    expect(roundTrip?.evidence?.[0]).toMatchObject({ kind: "OOMKilled", hard: true })
+  })
+
   it("leaves detectedBy undefined for incidents without a source", async () => {
     const created = await store.createIncident({
       title: "external outage",

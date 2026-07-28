@@ -15,6 +15,7 @@ import type {
   FailureType,
   TimelineEntry,
   RelatedLog,
+  SentinelEvidence,
 } from "../incident-types"
 
 /** The full persisted shape for a store. `version`/`seededAt` drive the seed +
@@ -41,6 +42,9 @@ export interface CreateIncidentInput {
   rca?: IncidentRca | null
   /** Detection provenance (alert `source` label), e.g. "nova-sentinel". */
   detectedBy?: string
+  /** Structured Sentinel evidence + confidence (0..1). */
+  evidence?: SentinelEvidence[]
+  confidence?: number
 }
 
 export interface UpdateIncidentInput {
