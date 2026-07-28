@@ -264,10 +264,24 @@ domain:
 - [x] Read-only RBAC + resource limits (Helm) already in place; dry-run mode.
 - [x] Config surface (`mute`/`maxIncidentsPerMin`/`startupGraceSec`) + example yaml;
       tests: mute, storm cap + window refill, startup grace. 521 tests green.
-- [x] **Log-tail resilience**: streams auto-restart on error (no thrash) and Node
-      agent socket caps lifted.
-- [ ] Dry-run/tuning mode surfaced in the dashboard UI (needs a Sentinel status
-      heartbeat) — follow-up.
+- [x] **Log-tail resilience + scale**: streams auto-restart on error (no thrash);
+      a bounded, priority-aware `TailScheduler` (`lib/sentinel/log-scheduler.ts`)
+      caps concurrent follow-streams (`logs.maxConcurrentTails`) and tails
+      already-unhealthy pods first — fixes the E2E-found silent stream-exhaustion.
+      Verified live (business-impact incident now fires). 528 tests.
+- [x] **Dry-run/status surfaced in the dashboard UI**: the companion posts a
+      liveness heartbeat (`/api/sentinel/status`) every 30s; the topbar shows a
+      Sentinel `ACTIVE` / `DRY-RUN` / `OFFLINE` indicator (`sentinel-status.tsx`,
+      `lib/sentinel/status.ts`). Hidden when Sentinel never checked in. 532 tests.
+
+### Carry-overs
+- [x] **"Analyse with AI" consumes Sentinel evidence** — already wired: the RCA
+      context includes `Description: ${incident.description}`, and Sentinel writes
+      its full evidence (signal list + confidence "why flagged") into that
+      description. Verified in `rca-document-modal.tsx`.
+- [ ] **Retire the custom metrics-collector** — larger, riskier refactor (it also
+      serves the RCA's real logs via `fetchCollectorLogs`); needs its own effort to
+      move metrics to the `lib/metrics` adapter + logs to a backend. Deferred.
 
 ### E2E validation (kind `nova-platform`, otel-demo)  ✅ / findings
 - [x] Config-driven deploy (mounted `nova.config.yaml`): `impact=true`, `mute`, cap

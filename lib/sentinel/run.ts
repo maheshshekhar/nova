@@ -292,6 +292,19 @@ export function start(): void {
     void engine.tick().catch((e) => log(`tick error: ${e}`))
   }, 60_000)
   tick.unref?.()
+
+  // Liveness heartbeat so the dashboard can show Sentinel status + mode.
+  const scope = cfg.namespaces.length ? cfg.namespaces.join(",") : "all"
+  const heartbeat = () => {
+    void fetch(`${novaUrl.replace(/\/$/, "")}/api/sentinel/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dryRun: cfg.dryRun, scope, logs: build.logsEnabled }),
+    }).catch(() => {})
+  }
+  heartbeat()
+  const hb = setInterval(heartbeat, 30_000)
+  hb.unref?.()
 }
 
 // Run when invoked directly (tsx lib/sentinel/run.ts).
