@@ -83,6 +83,12 @@ export class SentinelEngine {
     await this.process(this.analyzer.observe(line))
   }
 
+  /** Clock-driven pass (once per bucket) for absence/baseline detection —
+   * catches success signals that have gone silent. Driven by the runtime timer. */
+  async tick(): Promise<void> {
+    await this.process(this.analyzer.tick(this.now()))
+  }
+
   private async process(signals: Signal[]): Promise<void> {
     if (signals.length === 0) return
     const decisions = this.correlator.ingest(signals, this.now())

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest"
 import { SentinelEngine } from "@/lib/sentinel/engine"
 import { PodServiceIndex } from "@/lib/sentinel/service-index"
 import { Correlator } from "@/lib/sentinel/correlate"
+import { AbsenceMonitor } from "@/lib/sentinel/business/absence"
+import { LogAnalyzer } from "@/lib/sentinel/logs/analyzer"
 import type { IncidentSink } from "@/lib/sentinel/sink"
 import type { SentinelAlert } from "@/lib/sentinel/incident"
 
@@ -125,6 +127,26 @@ describe("SentinelEngine.onLog", () => {
     const engine = new SentinelEngine({ sink, dryRun: true, logger: vi.fn() })
     await engine.onLog({ service: "checkout", message: "panic: boom" })
     expect(sink.posted).toHaveLength(0)
+  })
+})
+
+describe("SentinelEngine.tick (absence detection)", () => {
+  it("opens a SuccessDrop incident when a success signal collapses", async () => {
+    const MIN = 60_000
+    const absence = new AbsenceMonitor({ match: { pattern: "checkout complete" }, minBaselineBuckets: 5, minBaseline: 10, dropFactor: 5, label: "checkouts" })
+    const sink = collectingSink()
+    const engine = new SentinelEngine({ sink, analyzer: new LogAnalyzer({ absence }) })
+    // 6 healthy minutes of success logs, then silence.
+    for (let b = 0; b < 6; b++) {
+      for (let i = 0; i < 50; i++) {
+        await engine.onLog({ service: "checkout", namespace: "prod", message: "checkout complete", level: "info", at: b * MIN + i })
+      }
+    }
+    // Advance the clock to the next bucket and tick.
+    ;(engine as unknown as { now: () => number }).now = () => 7 * MIN
+    await engine.tick()
+    expect(sink.posted).toHaveLength(1)
+    expect(sink.posted[0].labels).toMatchObject({ service: "checkout", severity: "critical", failure_type: "latency-slo" })
   })
 })
 
