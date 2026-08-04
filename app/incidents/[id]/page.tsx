@@ -5,6 +5,7 @@ import Link from "next/link"
 import { ArrowLeft, AlertTriangle, Clock, Users, Zap, Terminal, ExternalLink, Brain, ShieldCheck, Sparkles, CheckCircle2, Loader2, FileText, BookOpen, Play } from "lucide-react"
 import { useRealLogs } from "@/hooks/use-real-metrics"
 import { RcaGeneratorButton } from "@/components/dashboard/rca-document-modal"
+import { AiRootCauseSection } from "@/components/dashboard/ai-rca-section"
 import { NovaBadge } from "@/components/dashboard/nova-badge"
 import { matchRunbook, type Runbook } from "@/lib/runbooks"
 import { formatLocalTime, formatLocalClock, parseRawLogLine } from "@/lib/local-time"
@@ -415,28 +416,24 @@ export default function IncidentDetailPage({ params }: { params: Promise<{ id: s
         </div>
       </div>
 
-      {/* AI Root Cause Analysis — generated on demand from the service's real pod
-          logs (streamed by the configured LLM). Shown while the incident is open. */}
+      {/* AI Root Cause Analysis — inline "Analyze with AI" (streamed) + a dynamic
+          Recovery Plan (the matched runbook's steps, else a service-aware manual
+          checklist). Shown while the incident is open. */}
       {isOpen && (
-        <div className="card-glass rounded-lg p-5 border border-[var(--neon-purple,#a78bfa)]/20">
-          <h2 className="text-xs font-mono font-semibold text-muted-foreground tracking-widest uppercase mb-2 flex items-center gap-2">
-            <Sparkles className="w-3.5 h-3.5 text-[var(--neon-purple,#a78bfa)]" /> AI Root Cause Analysis
-          </h2>
-          <p className="text-sm text-foreground/70 mb-4 max-w-2xl leading-relaxed">
-            Generate an AI root-cause analysis for {incident.id} from {incident.service}&apos;s
-            {useRealRelated ? " live pod logs" : " incident record"} — streamed by AI and grounded
-            in the real cluster signal.
-          </p>
-          <RcaGeneratorButton
-            incident={incident}
-            realLogs={useRealRelated ? effectiveRealLogs : []}
-            logsAvailable={useRealRelated}
-            initialRca={record?.rca ?? null}
-            incidentStartedAtMs={record?.startedAt}
-            incidentResolvedAtMs={record?.resolvedAt ?? undefined}
-            incidentFailureType={record?.failureType}
-          />
-        </div>
+        <AiRootCauseSection
+          incidentId={id}
+          service={incident.service}
+          title={incident.title}
+          description={incident.description}
+          failureType={record?.failureType}
+          runbook={matchedRunbook}
+          realLogs={effectiveRealLogs}
+          logsAvailable={useRealRelated}
+          startedAtMs={record?.startedAt}
+          impact={displayAffected}
+          resolved={resolved}
+          onResolved={() => setRefreshTick((t) => t + 1)}
+        />
       )}
 
       {/* Post-Incident Report — RCA document generator, shown once resolved. */}
@@ -659,3 +656,6 @@ function RunbookPanel({
     </div>
   )
 }
+
+// AiRootCauseSection lives in components/dashboard/ai-rca-section.tsx (shared with
+// the overview). Imported at the top of this file.
