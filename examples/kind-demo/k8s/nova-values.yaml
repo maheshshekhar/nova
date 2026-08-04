@@ -84,6 +84,14 @@ sentinel:
   namespaces: [] # all namespaces
   dryRun: false
 
+# Serve the dashboard on a fixed NodePort so KinD's port mapping
+# (containerPort 30000 → hostPort 3000) reaches it directly at localhost:3000 —
+# no fragile kubectl port-forward needed (works cleanly under Colima too).
+service:
+  type: NodePort
+  port: 3000
+  nodePort: 30000
+
 # Incident store lives on a PVC backed by kind's default local-path StorageClass.
 # (Data is cluster-scoped: `kind delete` wipes it, like any real PVC teardown.)
 persistence:

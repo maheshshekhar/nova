@@ -20,6 +20,6 @@ kubectl rollout status deployment/dashboard \
   --timeout=60s
 
 kubectl port-forward \
-  service/dashboard \
+  deployment/dashboard \
   3000:3000 \
   --namespace="${NAMESPACE}"

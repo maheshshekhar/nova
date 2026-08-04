@@ -115,16 +115,18 @@ helm upgrade --install nova deploy/helm/nova \
   --wait --timeout 4m || error "Helm install failed"
 success "Nova deployed (dashboard + Sentinel companion)"
 
-# ── Serve: background port-forward on :3000 (+ optional trusted https://nova) ──
-log "Starting background port-forward (dashboard:3000)..."
-pkill -f "port-forward service/dashboard" 2>/dev/null || true
-nohup kubectl port-forward service/dashboard 3000:3000 -n "$MON_NAMESPACE" \
-  > /tmp/nova-portforward.log 2>&1 & disown 2>/dev/null || true
-
-for i in $(seq 1 15); do
+# ── Serve: the dashboard Service is a NodePort (30000) that KinD maps to the host
+# at :3000 (see the cluster's extraPortMappings), so it's reachable directly at
+# http://localhost:3000 — no fragile kubectl port-forward to die or collide with
+# Colima's own port mapping.
+log "Waiting for the dashboard on http://localhost:3000 ..."
+# Clean up any stale port-forward from older setups that would squat :3000.
+pkill -f "nova-port-forward" 2>/dev/null || true
+pkill -f "port-forward .*dashboard 3000:3000" 2>/dev/null || true
+for i in $(seq 1 30); do
   curl -sf -o /dev/null "http://localhost:3000/overview" && { success "Dashboard: http://localhost:3000/overview"; break; }
-  [ "$i" -eq 15 ] && warn "Dashboard not confirmed on :3000 yet — check /tmp/nova-portforward.log"
-  sleep 1
+  [ "$i" -eq 30 ] && warn "Dashboard not confirmed on :3000 yet — check: kubectl get svc dashboard -n $MON_NAMESPACE (NodePort 30000 ↔ host 3000)"
+  sleep 2
 done
 
 # Optional: trusted https://nova (mkcert + Caddy). Nova is the only proxied host.

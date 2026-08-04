@@ -102,6 +102,10 @@ persistence:
 service:
   type: ClusterIP
   port: 3000
+  # For service.type: NodePort, optionally pin the node port (30000–32767). The
+  # kind demo uses this so its containerPort:30000→hostPort:3000 mapping serves the
+  # dashboard at localhost:3000 with no port-forward. Leave unset for a random port.
+  # nodePort: 30000
 
 ingress:
   enabled: false

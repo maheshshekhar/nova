@@ -11,7 +11,8 @@ echo ""
 echo -e "${RED}Tearing down nova-platform cluster...${NC}"
 
 # Stop background port-forwards so ports 3000/3001/9093 are freed for the next setup.
-pkill -f "port-forward service/dashboard" 2>/dev/null || true
+pkill -f "nova-port-forward" 2>/dev/null || true
+pkill -f "port-forward deployment/dashboard" 2>/dev/null || true
 pkill -f "port-forward service/grafana" 2>/dev/null || true
 pkill -f "port-forward service/alertmanager" 2>/dev/null || true
 
