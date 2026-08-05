@@ -281,8 +281,13 @@ export const SentinelConfigSchema = z
      * (0 = unlimited). Backpressure against a cluster-wide meltdown. */
     maxIncidentsPerMin: z.number().int().nonnegative().default(20),
     /** Suppress incident emission for this many seconds after start (still learns
-     * baselines) so the initial informer sync of pre-existing state can't storm. */
-    startupGraceSec: z.number().int().nonnegative().default(0),
+     * baselines) so the initial informer sync of pre-existing state can't storm.
+     * Doubles as a cluster-wide warmup covering first bring-up of all workloads. */
+    startupGraceSec: z.number().int().nonnegative().default(60),
+    /** Per-resource readiness grace: suppress incidents whose signals all come
+     * from pods that are not yet Ready, or have been Ready for fewer than this
+     * many seconds — kills first-boot transient noise. 0 disables the gate. */
+    resourceReadyGraceSec: z.number().int().nonnegative().default(60),
     logs: z
       .object({
         enabled: z.boolean().default(true),
@@ -490,6 +495,18 @@ export const ServerConfigSchema = z
   .default({})
 export type ServerConfig = z.infer<typeof ServerConfigSchema>
 
+// ── Incidents (id scheme) ────────────────────────────────────────────────────
+// Lets a team brand its incident ids. `idPrefix` + a monotonic counter starting
+// at `startNumber` form each id (e.g. idPrefix "PAY-", startNumber 1000 ⇒
+// PAY-1000, PAY-1001, …). Defaults reproduce today's INC-2847 sequence.
+export const IncidentsConfigSchema = z
+  .object({
+    idPrefix: z.string().default("INC-"),
+    startNumber: z.number().int().positive().default(2847),
+  })
+  .default({})
+export type IncidentsConfig = z.infer<typeof IncidentsConfigSchema>
+
 // ── Root ─────────────────────────────────────────────────────────────────────
 export const NovaConfigSchema = z
   .object({
@@ -500,6 +517,7 @@ export const NovaConfigSchema = z
     ai: AiConfigSchema,
     logs: LogsConfigSchema,
     persistence: PersistenceConfigSchema,
+    incidents: IncidentsConfigSchema,
     metrics: MetricsConfigSchema,
     dashboard: DashboardConfigSchema,
     detection: DetectionConfigSchema,

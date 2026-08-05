@@ -137,6 +137,24 @@ export function buildSettingsView(
     ],
   }
 
+  const sentinel = config.sentinel
+  const sentinelTab: SettingsTab = {
+    id: "sentinel",
+    title: "Sentinel",
+    rows: [
+      { key: "Enabled", value: String(sentinel.enabled) },
+      { key: "Dry run", value: String(sentinel.dryRun) },
+      { key: "Sensitivity", value: sentinel.sensitivity },
+      // How long to hold incidents back so first-boot noise never reaches the
+      // dashboard — the two "wait before things show up" knobs.
+      { key: "Startup grace (cluster warmup)", value: `${sentinel.startupGraceSec}s` },
+      { key: "Per-resource ready grace", value: `${sentinel.resourceReadyGraceSec}s` },
+      { key: "Dedupe window", value: `${sentinel.dedupeWindowSec}s` },
+      { key: "Max incidents / min", value: String(sentinel.maxIncidentsPerMin) },
+      { key: "Muted services", value: sentinel.mute.join(", ") || "(none)" },
+    ],
+  }
+
   const featuresTab: SettingsTab = {
     id: "features",
     title: "Features",
@@ -175,6 +193,7 @@ export function buildSettingsView(
       runbooksTab,
       evalTab,
       detectionTab,
+      sentinelTab,
       featuresTab,
       notificationsTab,
     ],

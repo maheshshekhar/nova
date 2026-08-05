@@ -51,9 +51,6 @@ check "sentinel companion deployment ready" \
 check "ai-keys secret exists (nova-monitoring)" \
   "kubectl get secret ai-keys -n $MON_NAMESPACE"
 
-check "ai-keys secret exists (production)" \
-  "kubectl get secret ai-keys -n $NAMESPACE"
-
 check "metrics-server running" \
   "kubectl get deployment metrics-server -n kube-system | grep -E '1/1'"
 

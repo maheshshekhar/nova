@@ -36,3 +36,15 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- include "nova.fullname" . -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+ConfigMap name for nova.config.yaml, suffixed with a short content hash.
+The config is mounted via `subPath`, and Kubernetes does NOT propagate
+ConfigMap updates to subPath mounts (kubelet even serves the cached copy to
+new pods on the same node). Hashing the name means every config change yields
+a brand-new ConfigMap object that no kubelet has cached, so pods always mount
+fresh content. Helm garbage-collects the old (now-unreferenced) ConfigMap.
+*/}}
+{{- define "nova.configMapName" -}}
+{{- printf "%s-config-%s" (include "nova.fullname" .) (toYaml .Values.novaConfig | sha256sum | trunc 8) -}}
+{{- end -}}

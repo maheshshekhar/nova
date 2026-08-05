@@ -30,6 +30,12 @@ config:
         Mem_Buf_Limit    10MB
         Skip_Long_Lines  On
         Refresh_Interval 5
+        # KinD/Docker-Desktop nodes share the host kernel's inotify limits
+        # (fs.inotify.max_user_instances), which are quickly exhausted and cause
+        # `tail_fs_inotify.c errno=24 Too many open files` → the input fails to
+        # init and the whole pod crash-loops. Fall back to stat-based polling so
+        # Fluent Bit starts reliably regardless of the host's inotify budget.
+        Inotify_Watcher  false
 
   filters: |
     [FILTER]

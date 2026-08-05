@@ -46,6 +46,13 @@ persistence:
   # uri: ${MONGO_URI}           # mongo/postgres
   # bucket: nova-data           # s3
 
+# ── Incident id scheme (brand ids per team) ──────────────────────────────────
+# Ids are `<idPrefix><n>` with n counting up from startNumber (e.g. INC-2847,
+# INC-2848…). Change these to match your team's ticketing convention.
+incidents:
+  idPrefix: "INC-"              # e.g. "PAY-" for a payments team
+  startNumber: 2847            # first id assigned when the store is empty
+
 # ── Metrics (optional) ───────────────────────────────────────────────────────
 metrics:
   provider: kubernetes          # kubernetes | prometheus | none  (http = legacy alias for kubernetes)
@@ -123,7 +130,8 @@ sentinel:
   sensitivity: medium          # low | medium | high (rate/volume spike aggressiveness)
   mute: []                     # services to never open incidents for (e.g. [load-generator])
   maxIncidentsPerMin: 20       # storm control: cap NEW incidents/min cluster-wide (0 = unlimited)
-  startupGraceSec: 0           # suppress emission for N sec after start (avoids initial-sync storms)
+  startupGraceSec: 60          # suppress emission for N sec after start (cluster-wide warmup / avoids initial-sync storms)
+  resourceReadyGraceSec: 60    # suppress incidents whose signals all come from pods Ready < N sec (kills first-boot noise; 0 disables)
   logs:
     enabled: true              # tail pod logs for anomaly/signature/rate signals
     warmupLines: 50            # learn a service's normal templates before flagging novelty

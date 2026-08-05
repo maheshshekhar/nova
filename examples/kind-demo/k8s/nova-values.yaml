@@ -47,6 +47,12 @@ novaConfig:
     provider: file
     seed: none
     dataDir: /data
+  # Brand incident ids: <idPrefix><n> counting up from startNumber (e.g.
+  # MSC-1, MSC-2, …). Must live UNDER novaConfig — only this block is rendered
+  # into nova.config.yaml; a top-level `incidents:` is ignored by the chart.
+  incidents:
+    idPrefix: "MSC-"            # e.g. "PAY-" for a payments team
+    startNumber: 1              # first id assigned when the store is empty
   # Pod/workload health read in-process from the Kubernetes API + metrics-server
   # (no external collector). Switch to `prometheus` to add app RED metrics.
   metrics:
@@ -83,6 +89,9 @@ sentinel:
     pullPolicy: Never
   namespaces: [] # all namespaces
   dryRun: false
+  maxIncidentsPerMin: 20       # storm control: cap NEW incidents/min cluster-wide (0 = unlimited)
+  startupGraceSec: 180          # suppress emission for N sec after start (cluster-wide warmup / avoids initial-sync storms)
+  resourceReadyGraceSec: 60
 
 # Serve the dashboard on a fixed NodePort so KinD's port mapping
 # (containerPort 30000 → hostPort 3000) reaches it directly at localhost:3000 —
@@ -101,3 +110,15 @@ persistence:
 # No external ingress in the demo — the platform script port-forwards :3000.
 ingress:
   enabled: false
+
+eval:
+  enabled: true
+  judge:
+    provider: anthropic         # should differ from the generator to avoid self-scoring
+    # model: claude-opus-4-20250514
+    apiKeyEnv: ANTHROPIC_API_KEY
+    temperature: 0
+  scoring:
+    weights: { deterministic: 0.55, judge: 0.45 }
+    passThreshold: 0.8
+  gradeIncidents: true

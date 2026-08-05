@@ -121,7 +121,7 @@ spec:
           emptyDir: {}
         - name: config
           configMap:
-            name: {{ include "nova.fullname" . }}-config
+            name: {{ include "nova.configMapName" . }}
       {{- with .Values.sentinel.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
