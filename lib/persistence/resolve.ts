@@ -27,7 +27,15 @@ export const persistenceRegistry = new AdapterRegistry<PersistenceConfig, Persis
 
 persistenceRegistry.register(
   "file",
-  (cfg) => new FileIncidentStore({ dataDir: cfg.dataDir, seed: resolveSeeder(cfg) })
+  (cfg) => {
+    const incidents = getConfig().incidents
+    return new FileIncidentStore({
+      dataDir: cfg.dataDir,
+      seed: resolveSeeder(cfg),
+      idPrefix: incidents.idPrefix,
+      startNumber: incidents.startNumber,
+    })
+  }
 )
 
 let cached: PersistenceStore | null = null

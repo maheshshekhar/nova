@@ -23,15 +23,23 @@ export interface BaseIncidentStoreOptions {
   /** Produce the seed incidents for a base timestamp. Omit ⇒ start empty
    * (this is what M11 uses to remove static demo data from the core). */
   seed?: (baseMs: number) => IncidentRecord[]
+  /** Prefix for generated incident ids (default "INC-"). */
+  idPrefix?: string
+  /** The first incident number to assign when the store is empty (default 2847). */
+  startNumber?: number
 }
 
 export abstract class BaseIncidentStore implements PersistenceStore {
   protected readonly storeVersion: number
   private readonly seed: (baseMs: number) => IncidentRecord[]
+  private readonly idPrefix: string
+  private readonly startNumber: number
 
   constructor(opts: BaseIncidentStoreOptions) {
     this.storeVersion = opts.storeVersion
     this.seed = opts.seed ?? (() => [])
+    this.idPrefix = opts.idPrefix ?? "INC-"
+    this.startNumber = opts.startNumber ?? 2847
   }
 
   // ── Storage primitives implemented by each backend ──────────────────────────
@@ -138,11 +146,13 @@ export abstract class BaseIncidentStore implements PersistenceStore {
   // (createIncident) so it never re-enters loadOrSeed/withWriteLock (which would
   // deadlock the per-instance mutex on an unseeded store).
   private computeNextId(state: StoreState): string {
+    const prefixRe = new RegExp(`^${escapeRegExp(this.idPrefix)}`)
+    const floor = this.startNumber - 1
     const max = state.incidents.reduce((m, i) => {
-      const n = Number(i.id.replace(/^INC-/, ""))
+      const n = Number(i.id.replace(prefixRe, ""))
       return Number.isFinite(n) && n > m ? n : m
-    }, 2846)
-    return `INC-${max + 1}`
+    }, floor)
+    return `${this.idPrefix}${max + 1}`
   }
 
   async createIncident(input: CreateIncidentInput): Promise<IncidentRecord> {
@@ -238,4 +248,9 @@ export abstract class BaseIncidentStore implements PersistenceStore {
   ): Promise<IncidentRecord | null> {
     return this.updateIncident(id, { status: "resolved", resolvedAt })
   }
+}
+
+/** Escape a string for safe embedding in a RegExp (id-prefix matching). */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }

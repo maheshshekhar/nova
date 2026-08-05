@@ -99,6 +99,61 @@ describe("SentinelEngine", () => {
   })
 })
 
+describe("SentinelEngine — per-resource readiness grace", () => {
+  it("suppresses a crash signal while the pod is still inside its startup window", async () => {
+    const sink = collectingSink()
+    const logger = vi.fn()
+    const engine = new SentinelEngine({ sink, resourceReadyGraceMs: 60_000, now: () => 0, logger })
+    await engine.onPod(crashingPod()) // first observed at t=0, age 0 < grace
+    expect(sink.posted).toHaveLength(0)
+    expect(logger).toHaveBeenCalledWith(expect.stringContaining("[readiness-grace]"))
+  })
+
+  it("opens the incident once the pod stays broken past the grace (real crashloop)", async () => {
+    const sink = collectingSink()
+    let clock = 0
+    const engine = new SentinelEngine({ sink, resourceReadyGraceMs: 60_000, now: () => clock })
+    await engine.onPod(crashingPod()) // first seen at t=0 → suppressed
+    expect(sink.posted).toHaveLength(0)
+    clock = 60_000 // still crashing, now past the grace
+    await engine.onPod(crashingPod())
+    expect(sink.posted).toHaveLength(1)
+    expect(sink.posted[0].labels).toMatchObject({ service: "checkout", failure_type: "CrashLoopBackOff" })
+  })
+
+  it("suppresses a log signal from a pod that only just became Ready", async () => {
+    const sink = collectingSink()
+    const engine = new SentinelEngine({ sink, resourceReadyGraceMs: 60_000, now: () => 0 })
+    engine.index.upsert(healthyPod("checkout-x", "checkout", "prod")) // Ready at t=0
+    await engine.onLog({ service: "checkout", namespace: "prod", message: "panic: boom", pod: "checkout-x" })
+    expect(sink.posted).toHaveLength(0)
+  })
+
+  it("keeps a signal from a pod that has been Ready longer than the grace", async () => {
+    const sink = collectingSink()
+    let clock = 0
+    const engine = new SentinelEngine({ sink, resourceReadyGraceMs: 60_000, now: () => clock })
+    engine.index.upsert(healthyPod("checkout-x", "checkout", "prod")) // Ready at t=0
+    clock = 60_000
+    await engine.onLog({ service: "checkout", namespace: "prod", message: "panic: boom", pod: "checkout-x" })
+    expect(sink.posted).toHaveLength(1)
+  })
+
+  it("keeps a signal from an unknown pod (cannot determine readiness)", async () => {
+    const sink = collectingSink()
+    const engine = new SentinelEngine({ sink, resourceReadyGraceMs: 60_000, now: () => 0 })
+    await engine.onLog({ service: "checkout", namespace: "prod", message: "panic: boom", pod: "never-seen" })
+    expect(sink.posted).toHaveLength(1)
+  })
+
+  it("is disabled by default (grace 0) — crashing pod opens immediately", async () => {
+    const sink = collectingSink()
+    const engine = new SentinelEngine({ sink, now: () => 0 })
+    await engine.onPod(crashingPod())
+    expect(sink.posted).toHaveLength(1)
+  })
+})
+
 describe("SentinelEngine.onLog", () => {
   it("opens an incident from a fatal log signature", async () => {
     const sink = collectingSink()

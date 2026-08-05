@@ -19,6 +19,10 @@ export interface FileIncidentStoreOptions {
   storeVersion?: number
   /** Override the seeder (tests). Defaults to an empty seeder (no demo data). */
   seed?: (baseMs: number) => StoreState["incidents"]
+  /** Prefix for generated incident ids (default "INC-"). */
+  idPrefix?: string
+  /** The first incident number assigned when the store is empty (default 2847). */
+  startNumber?: number
 }
 
 export class FileIncidentStore extends BaseIncidentStore {
@@ -29,6 +33,8 @@ export class FileIncidentStore extends BaseIncidentStore {
     super({
       storeVersion: opts.storeVersion ?? STORE_VERSION,
       seed: opts.seed ?? (() => []),
+      idPrefix: opts.idPrefix,
+      startNumber: opts.startNumber,
     })
     // Resolved lazily at construction so a test that sets DATA_DIR before first
     // use is honoured (matches the previous module-level behaviour).

@@ -24,9 +24,21 @@ describe("buildSettingsView — structure", () => {
       "runbooks",
       "eval",
       "detection",
+      "sentinel",
       "features",
       "notifications",
     ])
+  })
+
+  it("surfaces the Sentinel wait/grace knobs (read-only, configurable via YAML)", () => {
+    const view = buildSettingsView(
+      cfg({ sentinel: { startupGraceSec: 120, resourceReadyGraceSec: 90 } }),
+      DEFAULT_DOMAIN,
+      {}
+    )
+    const tab = view.tabs.find((t) => t.id === "sentinel")!
+    expect(tab.rows).toContainEqual({ key: "Startup grace (cluster warmup)", value: "120s" })
+    expect(tab.rows).toContainEqual({ key: "Per-resource ready grace", value: "90s" })
   })
 
   it("summarises notifications without leaking secrets", () => {

@@ -246,6 +246,7 @@ export function start(): void {
     maxIncidentsPerWindow: cfg.maxIncidentsPerMin,
     rateWindowMs: 60_000,
     startupGraceMs: cfg.startupGraceSec * 1000,
+    resourceReadyGraceMs: cfg.resourceReadyGraceSec * 1000,
     judge,
     maxJudgementsPerWindow: cfg.aiJudge.maxPerMin,
     minJudgeConfidence: cfg.aiJudge.minConfidence,

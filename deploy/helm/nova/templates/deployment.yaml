@@ -74,7 +74,7 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: {{ include "nova.fullname" . }}-config
+            name: {{ include "nova.configMapName" . }}
         {{- if .Values.persistence.enabled }}
         - name: data
           persistentVolumeClaim:

@@ -132,7 +132,7 @@ Idempotent and safe to re-run. It will:
 1. Check prerequisites (docker, kind, kubectl, helm) and add the Helm repos.
 2. Create the `nova-platform` KinD cluster (maps container `:30000` → host `:3000`).
 3. Install and patch **metrics-server** for KinD.
-4. Create the `production`, `db-postgres` + `nova-monitoring` namespaces and the `ai-keys` secret.
+4. Create the `nova-monitoring` namespace and the `ai-keys` secret.
 5. Build the Nova images — the **dashboard** (the product) and the **Sentinel**
    companion (read-only early detection), **skipping any whose source hasn't changed**.
 6. `kind load` the Nova images into the cluster (only when rebuilt or missing).

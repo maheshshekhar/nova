@@ -33,6 +33,10 @@ export interface SentinelEngineOptions {
   /** Suppress incident emission for this long after start (still learns baselines
    * and de-dups) so the initial informer sync of pre-existing state can't storm. */
   startupGraceMs?: number
+  /** Per-resource readiness grace: suppress a decision whose signals ALL originate
+   * from pods that are not yet Ready, or have been Ready for less than this long.
+   * Kills first-boot transient noise. 0 disables the gate. */
+  resourceReadyGraceMs?: number
   /** Optional on-demand AI judge for ambiguous soft-signal clusters. When set,
    * soft-only clusters below the auto-confirm bar are reasoned over (never
    * invented) and opened only if the judge confirms. Absent ⇒ today's behaviour. */
@@ -62,6 +66,7 @@ export class SentinelEngine {
   private readonly maxIncidents: number
   private readonly rateWindowMs: number
   private readonly startupGraceMs: number
+  private readonly resourceReadyGraceMs: number
   private readonly startedAt: number
   private readonly emitted: number[] = [] // recent emission timestamps (storm control)
   private readonly restartAccel: RestartAccelerationMonitor
@@ -79,13 +84,14 @@ export class SentinelEngine {
   constructor(opts: SentinelEngineOptions) {
     this.sink = opts.sink
     this.correlator = opts.correlator ?? new Correlator()
-    this.index = opts.index ?? new PodServiceIndex()
+    this.index = opts.index ?? new PodServiceIndex({ now: opts.now })
     this.analyzer = opts.analyzer ?? new LogAnalyzer({ now: opts.now })
     this.dryRun = opts.dryRun ?? false
     this.mute = new Set(opts.mute ?? [])
     this.maxIncidents = opts.maxIncidentsPerWindow ?? 0
     this.rateWindowMs = opts.rateWindowMs ?? 60_000
     this.startupGraceMs = opts.startupGraceMs ?? 0
+    this.resourceReadyGraceMs = opts.resourceReadyGraceMs ?? 0
     this.restartAccel = new RestartAccelerationMonitor({ now: opts.now })
     this.memTrend = new MemoryTrendMonitor({ now: opts.now })
     this.judge = opts.judge
@@ -188,12 +194,30 @@ export class SentinelEngine {
 
   private async process(signals: Signal[]): Promise<void> {
     // Storm/precision guard 1 — drop muted services entirely (before correlation).
-    const kept = this.mute.size ? signals.filter((s) => !this.mute.has(s.service)) : signals
+    let kept = this.mute.size ? signals.filter((s) => !this.mute.has(s.service)) : signals
     if (kept.length === 0) return
+
+    // Storm/precision guard 2 — per-resource readiness grace: drop signals from
+    // pods still inside their startup window (freshly Ready, or not-yet-Ready but
+    // only just observed) BEFORE correlation, so a still-starting resource never
+    // opens an incident — yet a pod that stays broken PAST the grace (e.g. a real
+    // CrashLoopBackOff) flows through and opens normally.
+    if (this.resourceReadyGraceMs > 0) {
+      const at = this.now()
+      kept = kept.filter((s) => {
+        if (this.signalWithinReadinessGrace(s, at)) {
+          this.log(`[readiness-grace] suppressed signal from starting resource: ${s.kind} on ${s.service}`)
+          return false
+        }
+        return true
+      })
+      if (kept.length === 0) return
+    }
+
     const now = this.now()
     const { decisions, ambiguous } = this.correlator.ingestDetailed(kept, now)
 
-    // Storm/precision guard 2 — startup grace: suppress during the initial sync
+    // Storm/precision guard 3 — startup grace: suppress during the initial sync
     // (covers both auto-confirmed decisions AND on-demand judging).
     if (this.startupGraceMs > 0 && now - this.startedAt < this.startupGraceMs) {
       for (const d of decisions) this.log(`[startup-grace] suppressed incident: ${d.reason}`)
@@ -206,7 +230,7 @@ export class SentinelEngine {
 
     if (decisions.length === 0) return
 
-    // Storm/precision guard 3 — global rate cap (backpressure).
+    // Storm/precision guard 4 — global rate cap (backpressure).
     const admitted = this.admit(decisions.length, now)
     if (admitted < decisions.length) {
       this.log(`[storm-control] rate cap reached (${this.maxIncidents}/${Math.round(this.rateWindowMs / 1000)}s); suppressed ${decisions.length - admitted} incident(s)`)
@@ -221,6 +245,20 @@ export class SentinelEngine {
       return
     }
     await this.sink.post(toEmit.map((d) => decisionToAlert(d, now)))
+  }
+
+  /** True when a signal comes from a pod still inside its startup window — either
+   * freshly Ready (Ready < grace) or not-yet-Ready but only just observed
+   * (age < grace). A signal from an established pod (Ready ≥ grace, or not-Ready
+   * for LONGER than the grace — a real crashloop) or an unknown source is kept.
+   * Precision over recall: only the genuine first-boot window is suppressed. */
+  private signalWithinReadinessGrace(s: Signal, now: number): boolean {
+    const r = this.index.readinessOf(s.namespace, s.source.name)
+    if (!r) return false // unknown source → treat as established, keep
+    const established = r.ready
+      ? r.readySince != null && now - r.readySince >= this.resourceReadyGraceMs
+      : now - r.firstSeen >= this.resourceReadyGraceMs // not-Ready too long ⇒ real problem
+    return !established
   }
 
   /** Fire off AI judgments for ambiguous clusters WITHOUT blocking the caller.
